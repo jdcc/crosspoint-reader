@@ -829,6 +829,9 @@ void EpubReaderActivity::loop() {
     pendingReadFolderMove = false;
   }
 
+  // The open toolbar or panel owns touch, including frontlight drags in the margins.
+  if (overlay == Overlay::None && frontlightDrag.update(renderer, mappedInput)) return;
+
   const auto touch =
       ReaderUtils::detectTouchPageTurn(renderer, mappedInput, ReaderUtils::isRtlBookLanguage(epub->getLanguage()));
 

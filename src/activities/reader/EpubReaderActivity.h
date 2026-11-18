@@ -14,6 +14,7 @@
 #include "ChapterPosition.h"
 #include "ClipSelectionActivity.h"
 #include "EpubReaderMenuActivity.h"
+#include "FrontlightDrag.h"
 #include "LinkNoteTitle.h"
 #include "ProgressMapper.h"
 #include "ReaderActivity.h"
@@ -106,6 +107,8 @@ class EpubReaderActivity final : public ReaderActivity {
   int autoTurnOption = 0;  // current auto page-turn rate index (More panel)
   std::vector<EpubReaderMenuActivity::MenuItem> moreItems;
   EpubReaderMenuActivity::MenuAction selectedMenuAction = EpubReaderMenuActivity::MenuAction::SELECT_CHAPTER;
+
+  FrontlightDrag frontlightDrag;
 
   // Footnote support
   std::vector<FootnoteEntry> currentPageFootnotes;
