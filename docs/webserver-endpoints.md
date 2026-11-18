@@ -260,8 +260,8 @@ Example item:
 
 `value` is always an index into `options`, never the option's text. The
 `fontSize` options depend on the selected family. A `.cpfont` family installed
-at 10/12/14 pt offers those three sizes. TTF/OTF/TTC families offer the
-standard 12/14/16/18 pt sizes. The `fontFamily` and `dictionaryName` options
+at 10/12/14 pt offers those three sizes. TTF/OTF/TTC families offer
+every whole size from 8 to 22 pt. The `fontFamily` and `dictionaryName` options
 also depend on the SD card contents.
 
 Types:
@@ -298,7 +298,7 @@ Applied 2 setting(s)
 
 Lists installed SD-card font families. On devices that load TTF/OTF/TTC files,
 these families appear with `sizes: [0]`. The `0` means that the font file has
-no fixed point size; the reader offers 12, 14, 16, and 18 pt.
+no fixed point size; the reader offers every whole size from 8 to 22 pt.
 
 ```bash
 curl http://crosspoint.local/api/fonts

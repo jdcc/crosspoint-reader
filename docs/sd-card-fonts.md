@@ -82,7 +82,7 @@ file in the same family folder takes priority over TTF/OTF/TTC files, so keep
 the two formats in separate folders. If both font roots contain the same family
 name, the copy in `/.fonts/` takes priority.
 
-Direct fonts use the standard reader sizes: 12, 14, 16, and 18 pt. The **Fonts**
+Direct fonts offer every whole point size from 8 to 22 pt. The **Fonts**
 tab in File Transfer accepts `.cpfont` files only. Copy direct fonts to the SD
 card instead. To remove a loose font file, delete that file from the SD card.
 The Fonts page can delete families stored in subfolders.
