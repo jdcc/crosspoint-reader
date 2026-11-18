@@ -738,12 +738,24 @@ bool Section::commitBuildFile(const uint8_t version, const uint32_t bytesConsume
   serialization::writePod(file, paragraphLutOffset);
   serialization::writePod(file, liLutFileOffset);
   serialization::writePod(file, visibleLutFileOffset);
+  // Any short write so far (pages, tables, header) leaves a file that would load
+  // as valid and then misread; do not commit it.
+  if (file.writeFailed()) {
+    LOG_ERR("SCT", "Section write failed (card full?); not committing");
+    return failCommit();
+  }
   // ...then commit by overwriting the sentinel version with the real one. Writing the
   // version last makes it the commit point: a crash before here leaves version 0.
   file.seek(0);
   serialization::writePod(file, version);
-  // Explicit close() required: member variable persists beyond function scope
-  file.close();
+  // Explicit close() required: member variable persists beyond function scope.
+  // close() flushes the last sectors, so its result is part of the commit too.
+  const bool written = !file.writeFailed();
+  if (!file.close() || !written) {
+    LOG_ERR("SCT", "Section commit write failed; discarding");
+    Storage.remove(binTmpPath().c_str());
+    return false;
+  }
 
   // Swap into place. A crash between remove and rename loses the old file but keeps a
   // fully-committed tmp; the next build just removes it and rebuilds.
@@ -781,7 +793,8 @@ bool Section::finalizeBuild() {
   if (build_->cssParser) build_->cssParser->clear();
   build_.reset();
   if (!committed) {
-    // commitBuildFile removed filePath before the failed swap, so nothing valid remains.
+    // A failed commit either removed filePath before the swap or never touched it;
+    // either way this build produced nothing usable.
     partial_ = false;
     partialPageCount_ = 0;
     pageCount = 0;

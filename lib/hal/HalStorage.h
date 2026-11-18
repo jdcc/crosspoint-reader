@@ -117,6 +117,8 @@ class HalFile : public Print {
   bool isDirectory() const;
   void rewindDirectory();
   bool close();
+  // Sticky: true once any write on this handle came up short (e.g. a full card).
+  bool writeFailed() const;
   HalFile openNextFile();
   bool isOpen() const;
   operator bool() const;
