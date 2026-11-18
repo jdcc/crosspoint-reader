@@ -122,7 +122,10 @@ class OpdsBookBrowserActivity final : public CatalogActivity {
   // Decodes the /unlock response ({content_key: b64, expires: epoch}).
   static bool parseUnlockResponse(const std::string& response, LcpWrappedKey* wrapped, int64_t* expiresAt);
   std::string downloadDestination(const OpdsEntry& book) const;
-  bool verifyAndRegisterEpub(const std::string& filename);
+  // Where this book is on the SD card: the download folder, else /read (finished books).
+  // Empty when it is in neither. inReadFolder reports which one matched.
+  std::string localBookPath(const OpdsEntry& book, bool* inReadFolder = nullptr) const;
+  bool verifyAndRegisterEpub(const std::string& staged, const std::string& filename);
   // Fulfilled LCP book awaiting its passphrase (path + parsed license).
   freeink::content::LcpLicense pendingLcpLicense;
   // Raw license JSON, kept verbatim for the /unlock request body.
@@ -130,6 +133,12 @@ class OpdsBookBrowserActivity final : public CatalogActivity {
   std::string pendingLcpPath;
 
   void fetchFeed(const std::string& path);
+  // Whether the download in progress opens in the reader when it completes.
+  bool openAfterDownload = true;
+  // Not a purchase or a loan: offers Download and Download + Open.
+  static bool isPlainDownload(const OpdsEntry& book);
+  // Ends a finished, verified download: open it, or return to the catalog.
+  void completeDownload(const std::string& path);
   void releaseEntries();
   void navigateToEntry(const OpdsEntry& entry);
   void navigateBack();

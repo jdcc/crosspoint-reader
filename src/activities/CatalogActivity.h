@@ -63,6 +63,8 @@ class CatalogActivity : public UiListActivity {
   void launchSearch();
   void beginDownload(const std::string& title);
   void finishDownload(HttpDownloader::DownloadError result);
+  // Leaves the catalog and opens a book that is on the SD card.
+  void exitToBook(const std::string& path);
   // postBody non-null turns the transfer into a POST of that body (e.g. an
   // LCP license to the fulfillment service), with postContentType as its
   // Content-Type. Same heap gating and cancel/progress pump either way.

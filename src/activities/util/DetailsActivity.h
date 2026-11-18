@@ -26,6 +26,8 @@ struct DetailsSpec {
   std::string description;         // plain text, or HTML when descriptionHtml
   bool descriptionHtml = false;
   std::string actionLabel;  // primary button; confirming finishes with a non-cancelled result
+  // Optional second button; choosing it finishes with MenuResult{action = 1}.
+  std::string secondaryLabel;
 };
 
 // Title, metadata and the start of the description, with the primary action
@@ -42,6 +44,7 @@ class DetailsActivity final : public Activity, private UiAppHost {
  private:
   static void detailsScreen(UiScreen& screen, void* user);
   static void onPrimaryEvent(const freeink::ui::ActionEvent& event, void* user);
+  static void onSecondaryEvent(const freeink::ui::ActionEvent& event, void* user);
   static void onMoreEvent(const freeink::ui::ActionEvent& event, void* user);
   static bool paintCover(freeink::ui::DrawTarget& target, freeink::ui::Rect rect,
                          const freeink::ui::PublicationHeaderProps& props, void* user);
@@ -51,6 +54,7 @@ class DetailsActivity final : public Activity, private UiAppHost {
   bool needsLayout() const;
   void layoutDescription();
   void confirm();
+  void confirmSecondary();
   void cancel();
   void openMore();
 

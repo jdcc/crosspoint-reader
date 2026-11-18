@@ -116,7 +116,21 @@ void OpdsBookBrowserActivity::onExit() {
 void OpdsBookBrowserActivity::activateIndex(const int index) {
   app.clearTapFlash();
   const auto& entry = entries[index];
-  entry.type == OpdsEntryType::BOOK ? openPublicationDetail(entry) : navigateToEntry(entry);
+  if (entry.type != OpdsEntryType::BOOK) {
+    navigateToEntry(entry);
+    return;
+  }
+  openPublicationDetail(entry);
+}
+
+bool OpdsBookBrowserActivity::isPlainDownload(const OpdsEntry& book) { return !book.purchase && !book.indirect; }
+
+void OpdsBookBrowserActivity::completeDownload(const std::string& path) {
+  if (openAfterDownload) {
+    exitToBook(path);
+  } else {
+    downloadFinished(false);
+  }
 }
 
 bool OpdsBookBrowserActivity::handleCustomInput() {
@@ -281,7 +295,8 @@ void OpdsBookBrowserActivity::drawFooter() {
       const char* confirmLabel = tr(STR_OPEN);
       if (!entries.empty() && nav.selected >= 0 && nav.selected < static_cast<int>(entries.size()) &&
           entries[nav.selected].type == OpdsEntryType::BOOK) {
-        confirmLabel = entries[nav.selected].purchase ? tr(STR_OPDS_BUY) : tr(STR_DOWNLOAD);
+        // Books open their detail page, which holds the actions.
+        confirmLabel = entries[nav.selected].purchase ? tr(STR_OPDS_BUY) : tr(STR_DETAILS);
       }
       const char* searchLabel = (hasSearch() && nav.selected == 0) ? tr(STR_SEARCH) : tr(STR_DIR_UP);
       labels = mappedInput.mapLabels(tr(STR_BACK), confirmLabel, searchLabel, tr(STR_DIR_DOWN));
@@ -437,6 +452,11 @@ void OpdsBookBrowserActivity::rebuildRowItems() {
     if (entry.type == OpdsEntryType::NAVIGATION) item.value = entry.detail.empty() ? ">" : entry.detail.c_str();
     // Purchases show their price in the value column.
     if (entry.type == OpdsEntryType::BOOK && entry.purchase && !entry.detail.empty()) item.value = entry.detail.c_str();
+    // Marks a book already on the SD card; its detail page offers Open.
+    if (entry.type == OpdsEntryType::BOOK) {
+      bool inReadFolder = false;
+      if (!localBookPath(entry, &inReadFolder).empty()) item.value = inReadFolder ? tr(STR_READ) : tr(STR_DOWNLOADED);
+    }
     item.actionValue = static_cast<int16_t>(rowItems.size());
     rowItems.push_back(item);
   }
@@ -481,6 +501,25 @@ void OpdsBookBrowserActivity::navigateBack() {
 
 void OpdsBookBrowserActivity::onBackButton() { navigateBack(); }
 
+std::string OpdsBookBrowserActivity::localBookPath(const OpdsEntry& book, bool* inReadFolder) const {
+  if (inReadFolder) *inReadFolder = false;
+  const std::string filename =
+      opdsBookFilename(book.author, book.title, static_cast<OpdsFilenameFormat>(SETTINGS.opdsFilenameFormat));
+  std::string path;
+  path.reserve(96);
+  path += SETTINGS.opdsDownloadFolder;  // "" => SD root
+  path += '/';
+  path += filename;
+  if (Storage.exists(path.c_str())) return path;
+  // Mark as Read and Move Finished Books keep the file name.
+  path = "/read/" + filename;
+  if (Storage.exists(path.c_str())) {
+    if (inReadFolder) *inReadFolder = true;
+    return path;
+  }
+  return {};
+}
+
 // SD destination from the configured download folder + filename format.
 std::string OpdsBookBrowserActivity::downloadDestination(const OpdsEntry& book) const {
   // opdsDownloadFolder is already a null-terminated char[64]; use it directly —
@@ -505,21 +544,29 @@ std::string OpdsBookBrowserActivity::downloadDestination(const OpdsEntry& book) 
 }
 
 // A purchase link (or any misbehaving endpoint) can answer 200 with an HTML
-// page; a real EPUB is a ZIP container. Check the magic before accepting the
-// file, then register it with the caches. False = rejected (fail() called).
-bool OpdsBookBrowserActivity::verifyAndRegisterEpub(const std::string& filename) {
+// page; a real EPUB is a ZIP container. Check the magic on the staged
+// download, and only then move it over `filename`, so a bad answer to a
+// redownload never replaces the book already on the card. Then register it
+// with the caches. False = rejected (fail() called).
+bool OpdsBookBrowserActivity::verifyAndRegisterEpub(const std::string& staged, const std::string& filename) {
   uint8_t magic[4] = {0};
   {
     HalFile check;
-    if (Storage.openFileForRead("OPDS", filename.c_str(), check)) {
+    if (Storage.openFileForRead("OPDS", staged.c_str(), check)) {
       check.read(magic, sizeof(magic));
     }
     if (check.isOpen()) check.close();  // close before any remove() on the same path
   }
   if (!(magic[0] == 'P' && magic[1] == 'K' && magic[2] == 3 && magic[3] == 4)) {
     LOG_ERR("OPDS", "Downloaded file is not an EPUB (magic %02x%02x%02x%02x)", magic[0], magic[1], magic[2], magic[3]);
-    Storage.remove(filename.c_str());
+    Storage.remove(staged.c_str());
     fail(StrId::STR_OPDS_NOT_A_BOOK);
+    return false;
+  }
+  if (!Storage.replaceFile(staged.c_str(), filename.c_str())) {
+    LOG_ERR("OPDS", "Could not move %s into place", staged.c_str());
+    Storage.remove(staged.c_str());
+    fail(StrId::STR_DOWNLOAD_FAILED);
     return false;
   }
   clearBookCache(filename);
@@ -552,6 +599,7 @@ void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
     downloadUrl = resolved;
   }
   const std::string filename = downloadDestination(book);
+  const std::string staged = filename + ".new";  // replaces filename only once verified
   LOG_DBG("OPDS", "Downloading: %s -> %s", downloadUrl.c_str(), filename.c_str());
 
   // The selected book data is now copied into the download URL, filename, and
@@ -568,7 +616,7 @@ void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
       const freeink::opds::HttpAuth dlAuth = opdsClient.downloadAuth();
       std::vector<HttpDownloader::Header> headers = dlAuth.headers;
       if (!dlAuth.bearer.empty()) headers.push_back({"Authorization", "Bearer " + dlAuth.bearer});
-      result = downloadFile(downloadUrl, filename, dlAuth.username, dlAuth.password, headers);
+      result = downloadFile(downloadUrl, staged, dlAuth.username, dlAuth.password, headers);
     }
     if (attempt != 0 || result != HttpDownloader::UNAUTHORIZED || HttpDownloader::lastStatus() != 401 ||
         HttpDownloader::lastAnswerRedirected() ||
@@ -592,8 +640,11 @@ void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
     if (!authenticated) break;
   }
 
-  if (result == HttpDownloader::OK && !verifyAndRegisterEpub(filename)) return;
-  finishDownload(result);
+  if (result != HttpDownloader::OK) {
+    finishDownload(result);
+    return;
+  }
+  if (verifyAndRegisterEpub(staged, filename)) completeDownload(filename);
 }
 
 // LCP acquisition: the href is a small license document (.lcpl), not the
@@ -646,6 +697,7 @@ void OpdsBookBrowserActivity::downloadLcpBook(const OpdsEntry& book) {
   // firmware works unchanged when the service gains the production profile.
 
   const std::string filename = downloadDestination(book);
+  const std::string staged = filename + ".new";  // replaces filename only once verified
   LOG_DBG("OPDS", "LCP fulfill: %s -> %s", licenseUrl.c_str(), filename.c_str());
 
   // Reclaim the catalog while TLS owns its record buffers, as for a plain
@@ -654,13 +706,13 @@ void OpdsBookBrowserActivity::downloadLcpBook(const OpdsEntry& book) {
     RenderLock lock;
     releaseEntries();
   }
-  const auto result = downloadFile(freeink::content::LCP_FULFILL_URL, filename, "", "", {}, &licenseText,
+  const auto result = downloadFile(freeink::content::LCP_FULFILL_URL, staged, "", "", {}, &licenseText,
                                    "application/vnd.readium.lcp.license.v1.0+json");
   if (result != HttpDownloader::OK) {
     finishDownload(result);
     return;
   }
-  if (!verifyAndRegisterEpub(filename)) return;
+  if (!verifyAndRegisterEpub(staged, filename)) return;
 
   pendingLcpLicense = std::move(license);
   pendingLcpLicenseText = std::move(licenseText);
@@ -730,7 +782,7 @@ void OpdsBookBrowserActivity::startLcpUnlock() {
     if (!saved.empty()) {
       switch (requestLcpUnlock(saved)) {
         case LcpUnlock::Ok:
-          downloadFinished(false);
+          completeDownload(pendingLcpPath);
           return;
         case LcpUnlock::Failed:
           return;
@@ -779,7 +831,7 @@ void OpdsBookBrowserActivity::promptLcpPassphrase(const bool retry) {
         // this library skips the prompt. Best-effort: on failure the reader
         // just types it again next time.
         if (!pendingLcpLicense.provider.empty()) LCP_PASSPHRASES.put(pendingLcpLicense.provider, userKeyHex);
-        downloadFinished(false);
+        completeDownload(pendingLcpPath);
         return;
       case LcpUnlock::WrongPassphrase:
         promptLcpPassphrase(/*retry=*/true);
@@ -903,7 +955,18 @@ void OpdsBookBrowserActivity::openPublicationDetail(const OpdsEntry& entry) {
   spec.descriptionHeading = tr(STR_OPDS_ABOUT_BOOK);
   spec.description = std::move(publication.description);
   spec.descriptionHtml = true;  // publication documents may carry markup; plain text parses as-is
-  spec.actionLabel = acquireLabel(publication.availability);
+  // On the card: Open, plus Redownload (a cancelled LCP unlock, an expired loan,
+  // a damaged file). Plain downloads: Download, plus Download + Open. Purchases
+  // and loans keep their single acquire action.
+  const std::string localPath = localBookPath(detailBook);
+  if (!localPath.empty()) {
+    spec.actionLabel = tr(STR_OPEN);
+    // A purchase's acquisition link is its Buy link, so it gets no Redownload.
+    if (!detailBook.purchase) spec.secondaryLabel = tr(STR_REDOWNLOAD);
+  } else {
+    spec.actionLabel = acquireLabel(publication.availability);
+    if (isPlainDownload(detailBook)) spec.secondaryLabel = tr(STR_DOWNLOAD_AND_OPEN);
+  }
 
   auto details = makeUniqueNoThrow<DetailsActivity>(renderer, mappedInput, std::move(spec));
   if (!details) {
@@ -911,16 +974,29 @@ void OpdsBookBrowserActivity::openPublicationDetail(const OpdsEntry& entry) {
     startBrowse();
     return;
   }
-  startActivityForResult(std::move(details), [this](const ActivityResult& result) {
+  startActivityForResult(std::move(details), [this, localPath](const ActivityResult& result) {
     if (!detailCoverPath.empty()) {
       if (Storage.exists(detailCoverPath.c_str())) Storage.remove(detailCoverPath.c_str());
       detailCoverPath.clear();
     }
     if (result.isCancelled) {
       startBrowse();  // entries were released for heap; rebuild the catalog we came from
-    } else {
-      downloadBook(detailBook);
+      return;
     }
+    // The secondary button (Redownload, or Download + Open) reports MenuResult{1}.
+    const auto* menu = std::get_if<MenuResult>(&result.data);
+    const bool secondary = menu && menu->action == 1;
+    if (!localPath.empty()) {
+      if (!secondary) {
+        exitToBook(localPath);
+        return;
+      }
+      openAfterDownload = false;  // Redownload writes the download-folder copy and stays in the catalog
+    } else {
+      // Purchases and loans open once acquired, as before.
+      openAfterDownload = !isPlainDownload(detailBook) || secondary;
+    }
+    downloadBook(detailBook);
   });
 }
 

@@ -7,6 +7,7 @@
 #include <Memory.h>
 #include <WiFi.h>
 
+#include "CrossPointState.h"
 #include "MappedInputManager.h"
 #include "SilentRestart.h"
 #include "activities/network/WifiSelectionActivity.h"
@@ -27,6 +28,19 @@ void CatalogActivity::onExit() {
     delay(30);
     silentRestart();
   }
+}
+
+void CatalogActivity::exitToBook(const std::string& path) {
+  if (WiFi.getMode() == WIFI_MODE_NULL) {
+    onSelectBook(path);
+    return;
+  }
+  // Same heap-defrag reboot as onExit(), landing in the reader instead of Home.
+  APP_STATE.openEpubPath = path;
+  APP_STATE.saveToFile();
+  WiFi.disconnect(false);
+  delay(30);
+  silentRestartToReader();
 }
 
 bool CatalogActivity::wifiConnected() {
