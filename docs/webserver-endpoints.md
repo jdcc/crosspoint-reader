@@ -186,7 +186,7 @@ Form parameters:
 | `name` | Yes | New file name, not a path |
 
 Only files can be renamed through this endpoint. The old EPUB cache path is
-cleared before the rename.
+cleared before the rename. Renaming a book file marks the Library index stale.
 
 ### `POST /move`
 
@@ -204,7 +204,8 @@ Form parameters:
 | `dest` | Yes | Existing destination folder |
 
 Only files can be moved through this endpoint. The old EPUB cache path is
-cleared before the move.
+cleared before the move. Moving a book file marks the Library index stale.
+Books moved into the top-level `read` folder no longer appear in the Library.
 
 ### `POST /delete`
 

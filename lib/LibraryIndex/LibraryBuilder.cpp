@@ -217,7 +217,7 @@ bool equalsLowerAscii(const std::string_view name, const std::string_view lower)
 
 bool isLibrarySkipped(const std::string_view path, bool isNormalizedPath = false) {
   // Library-only exclusions: these directories must remain accessible in file managers.
-  constexpr std::string_view ROOTS[] = {"fonts", "dictionaries", "plugins", "sleep", "sleep-overlay"};
+  constexpr std::string_view ROOTS[] = {"fonts", "dictionaries", "plugins", "sleep", "sleep-overlay", "read"};
   const std::string_view relativePath = isNormalizedPath ? path : normalizeLibraryRootAliases(path);
   const std::string_view name = relativePath.substr(0, relativePath.find('/'));
   for (const auto root : ROOTS) {

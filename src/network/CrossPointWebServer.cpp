@@ -1341,6 +1341,10 @@ void CrossPointWebServer::handleRename() const {
 
   if (success) {
     sleepImageChanged(newPath.c_str());
+    // The index stores paths, so a renamed book must be re-indexed.
+    if (library::isLibraryBookFile(itemPath.c_str()) || library::isLibraryBookFile(newPath.c_str())) {
+      library::markLibraryIndexDirty();
+    }
     LOG_DBG("WEB", "Renamed file: %s -> %s", itemPath.c_str(), newPath.c_str());
     server->send(200, "text/plain", "Renamed successfully");
   } else {
@@ -1440,6 +1444,10 @@ void CrossPointWebServer::handleMove() const {
 
   if (success) {
     sleepImageChanged(newPath.c_str());
+    // Either end may be indexed: /read is skipped, so a move into it removes the book.
+    if (library::isLibraryBookFile(itemPath.c_str()) || library::isLibraryBookFile(newPath.c_str())) {
+      library::markLibraryIndexDirty();
+    }
     LOG_DBG("WEB", "Moved file: %s -> %s", itemPath.c_str(), newPath.c_str());
     server->send(200, "text/plain", "Moved successfully");
   } else {

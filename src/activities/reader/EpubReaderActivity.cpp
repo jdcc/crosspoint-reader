@@ -12,6 +12,7 @@
 #include <HalPowerManager.h>
 #include <HalStorage.h>
 #include <I18n.h>
+#include <LibraryBuilder.h>
 #include <Logging.h>
 #include <Memory.h>
 #include <TrustedTime.h>
@@ -111,9 +112,15 @@ int clampPercent(int percent) {
 
 constexpr char READ_FOLDER[] = "/read";
 
+// ASCII case-insensitive: FAT treats /Read and /read as the same folder.
 bool isInReadFolder(const std::string& path) {
   constexpr size_t n = sizeof(READ_FOLDER) - 1;
-  return path.size() > n && path.compare(0, n, READ_FOLDER) == 0 && path[n] == '/';
+  if (path.size() <= n || path[n] != '/') return false;
+  for (size_t i = 0; i < n; i++) {
+    const char c = path[i];
+    if ((c >= 'A' && c <= 'Z' ? static_cast<char>(c + ('a' - 'A')) : c) != READ_FOLDER[i]) return false;
+  }
+  return true;
 }
 
 struct ProgressRange {
@@ -203,6 +210,7 @@ void moveFinishedBookToReadFolder(const std::string& srcPath, const std::string&
   }
 
   RECENT_BOOKS.updatePath(srcPath, dstPath, oldCachePath, cacheMoved ? newCachePath : oldCachePath);
+  library::markLibraryIndexDirty();
   if (APP_STATE.openEpubPath == srcPath) {
     APP_STATE.openEpubPath = dstPath;
     APP_STATE.saveToFile();
@@ -237,7 +245,7 @@ EpubReaderActivity::~EpubReaderActivity() {
 
   section.reset();
   CLIPPINGS.unload();
-  if (pendingReadFolderMove && epub) {
+  if ((pendingReadFolderMove || markedAsRead) && epub && !isInReadFolder(epub->getPath())) {
     const std::string srcPath = epub->getPath();
     const std::string oldCachePath = epub->getCachePath();
     const std::string dstPath = buildReadFolderDestination(srcPath);
@@ -369,7 +377,8 @@ void EpubReaderActivity::openReaderMenu() {
   startActivityForResult(std::make_unique<EpubReaderMenuActivity>(
                              renderer, mappedInput, epub->getTitle(), position.displayPage(), position.totalPages,
                              bookProgressPercent, SETTINGS.orientation, !currentPageFootnotes.empty(),
-                             !cachedBookmarks.empty(), CLIPPINGS.hasClippings(), selectedMenuAction),
+                             !cachedBookmarks.empty(), CLIPPINGS.hasClippings(),
+                             !isInReadFolder(epub->getPath()), selectedMenuAction),
                          [this](const ActivityResult& result) {
                            const auto& menu = std::get<MenuResult>(result.data);
 
@@ -1333,6 +1342,13 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       break;
     }
     case EpubReaderMenuActivity::MenuAction::GO_HOME: {
+      onGoHome();
+      return;
+    }
+    case EpubReaderMenuActivity::MenuAction::MARK_AS_READ: {
+      // The destructor moves the book to /read once the EPUB is closed.
+      markedAsRead = true;
+      if (SETTINGS.removeReadBooksFromRecents) RECENT_BOOKS.removeByPath(epub->getPath());
       onGoHome();
       return;
     }
@@ -3211,7 +3227,7 @@ void EpubReaderActivity::applyReaderTextSettings() {
 void EpubReaderActivity::buildMoreActions() {
   using MA = EpubReaderMenuActivity::MenuAction;
   EpubReaderMenuActivity::buildMenuItems(moreItems, !currentPageFootnotes.empty(), !cachedBookmarks.empty(),
-                                         CLIPPINGS.hasClippings());
+                                         CLIPPINGS.hasClippings(), !isInReadFolder(epub->getPath()));
   moreItems.erase(std::remove_if(moreItems.begin(), moreItems.end(),
                                  [](const auto& item) {
                                    return item.action == MA::SELECT_CHAPTER || item.action == MA::TEXT_SETTINGS;
@@ -3338,10 +3354,10 @@ void EpubReaderActivity::activateMoreRow(int row) {
     return;
   }
   onReaderMenuConfirm(action);
-  // Child screens re-render the reader on Pop; GO_HOME/DELETE_CACHE leave the
-  // reader entirely. In-place actions would otherwise leave the closed panel
-  // on screen.
-  if (action != MA::GO_HOME && action != MA::DELETE_CACHE) requestUpdate();
+  // Child screens re-render the reader on Pop; GO_HOME/DELETE_CACHE/MARK_AS_READ
+  // leave the reader entirely. In-place actions would otherwise leave the closed
+  // panel on screen.
+  if (action != MA::GO_HOME && action != MA::DELETE_CACHE && action != MA::MARK_AS_READ) requestUpdate();
 }
 
 void EpubReaderActivity::navigateToHref(const std::string& hrefStr, const bool savePosition) {
