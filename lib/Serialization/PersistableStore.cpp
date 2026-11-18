@@ -20,7 +20,16 @@ bool PersistableStoreBase::writeDocToFile(const char* path, const JsonDocument& 
 
 bool PersistableStoreBase::readDocFromFile(const char* path, JsonDocument& doc) {
   if (!Storage.exists(path)) {
-    return false;  // Expected on first boot — not an error.
+    // Storage.writeFile() removes the old file before renaming <path>.tmp into
+    // place, so a power cut between the two leaves only the new copy. Adopt it
+    // if it parses; a .tmp cut off mid-write fails to parse and is ignored.
+    const std::string tmp = std::string(path) + ".tmp";
+    if (!Storage.exists(tmp.c_str())) return false;  // Expected on first boot — not an error.
+    String json = Storage.readFile(tmp.c_str());
+    if (json.isEmpty() || deserializeJson(doc, json)) return false;
+    if (!Storage.rename(tmp.c_str(), path)) LOG_ERR("PERSIST", "Could not restore %s from .tmp", path);
+    LOG_INF("PERSIST", "Recovered %s from an interrupted save", path);
+    return true;
   }
   String json = Storage.readFile(path);
   if (json.isEmpty()) {
