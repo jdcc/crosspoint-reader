@@ -221,6 +221,8 @@ void toggleFrontlight() {
   LOG_INF("LIGHT", "Frontlight toggled %s", lightOn ? "on" : "off");
 }
 
+int benchPlane = 0;  // bench diagnostic, see the PLANE serial command
+
 void toggleNightMode() {
   // The slide switch's position stays the source of truth when it is bound to night mode.
   if (slideSwitchOwns(CrossPointSettings::SLIDE_SWITCH_NIGHT_MODE)) return;
@@ -944,6 +946,12 @@ void loop() {
         uint8_t* buf = display.getFrameBuffer();
         logSerial.write(buf, bufferSize);
         logSerial.printf("SCREENSHOT_END\n");
+      } else if (cmd.startsWith("PLANE:")) {
+        // Bench diagnostic: draw one glyph plane (1 B/W, 2 dark-gray mask, 3 gray mask)
+        // of the current page into the framebuffer for the next SCREENSHOT; 9 shows
+        // the drive-pattern patch test on the panel.
+        benchPlane = cmd.substring(6).toInt();
+        activityManager.requestUpdate();
       }
     }
   }

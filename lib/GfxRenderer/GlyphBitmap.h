@@ -9,7 +9,11 @@
 namespace glyphBitmap {
 
 // Framebuffer plane a glyph is painted into.
-enum class Plane : uint8_t { BW, GrayLSB, GrayMSB };
+// BWThin is BW for text that gets no gray pass: light-gray edge pixels stay white.
+// BWCore and GrayLSBDark serve an inverted (night mode) page with a gray pass:
+// the base paints full ink only, and the dark-gray mask takes the light-gray
+// value, because that is the one nearer the panel's black background.
+enum class Plane : uint8_t { BW, BWThin, BWCore, GrayLSB, GrayLSBDark, GrayMSB };
 
 // Position of glyph pixel (0, 0) plus the step for one move along the glyph's
 // x and y axes, all in one coordinate space. The axes must describe an
@@ -97,8 +101,27 @@ inline void draw(const uint8_t* bitmap, int width, int height, bool twoBit, Plan
   uint8_t levels = 0x02;
   bool clearBits = state;
   if (twoBit) {
-    levels = plane == Plane::BW ? 0x0e : plane == Plane::GrayMSB ? 0x06 : 0x04;
-    if (plane != Plane::BW) clearBits = false;
+    switch (plane) {
+      case Plane::BW:
+        levels = 0x0e;
+        break;
+      case Plane::BWThin:
+        levels = 0x0c;
+        break;
+      case Plane::BWCore:
+        levels = 0x08;
+        break;
+      case Plane::GrayMSB:
+        levels = 0x06;
+        break;
+      case Plane::GrayLSB:
+        levels = 0x04;
+        break;
+      case Plane::GrayLSBDark:
+        levels = 0x02;
+        break;
+    }
+    if (plane == Plane::GrayLSB || plane == Plane::GrayLSBDark || plane == Plane::GrayMSB) clearBits = false;
   }
 
   // Intersect with the glyph bounds, then with the panel width and the

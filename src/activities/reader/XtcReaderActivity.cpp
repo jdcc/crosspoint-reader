@@ -142,6 +142,9 @@ void XtcReaderActivity::renderStatusBarOverlay(GfxRenderer& renderer, const Stat
 }
 
 void XtcReaderActivity::renderPage() {
+  // XTC pages send standard gray masks; the EPUB reader may have left the
+  // X4 Pro panel in its state-aware text mode. No-op when already standard.
+  display.setTextAaMode(0);
   const ReaderUtils::ReaderRefreshScope readerRefresh;
   const uint16_t pageWidth = xtc->getPageWidth();
   const uint16_t pageHeight = xtc->getPageHeight();

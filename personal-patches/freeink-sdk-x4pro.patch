@@ -1,0 +1,266 @@
+diff --git a/libs/display/FreeInkDisplay/include/FreeInkDisplay.h b/libs/display/FreeInkDisplay/include/FreeInkDisplay.h
+index aa581c9..6e20f07 100644
+--- a/libs/display/FreeInkDisplay/include/FreeInkDisplay.h
++++ b/libs/display/FreeInkDisplay/include/FreeInkDisplay.h
+@@ -298,6 +298,10 @@ class FreeInkDisplay {
+   // display or write its frame buffer, and runs with the caller's locks held
+   // (see PanelDriver::setRefreshIdleHook). Only drivers that support it run it.
+   void setRefreshIdleHook(void (*hook)(void* ctx), void* ctx);
++  // The gray masks that follow were prepared for an inverted page (see PanelDriver::setInvertedGrayscale).
++  void setInvertedGrayscale(bool prepared);
++  // One-pass text composition variant (see PanelDriver::setTextAaMode).
++  void setTextAaMode(uint8_t mode);
+   // Physical-pixel rectangle; restore=true removes the overlay from the retained gray image.
+   bool displayRetainedGrayscaleOverlay(uint16_t x, uint16_t y, uint16_t w, uint16_t h, bool restore = false);
+   void skipInitialResync();
+diff --git a/libs/display/FreeInkDisplay/src/FreeInkDisplay.cpp b/libs/display/FreeInkDisplay/src/FreeInkDisplay.cpp
+index 501b42f..d2d7c37 100644
+--- a/libs/display/FreeInkDisplay/src/FreeInkDisplay.cpp
++++ b/libs/display/FreeInkDisplay/src/FreeInkDisplay.cpp
+@@ -1187,6 +1187,14 @@ void FreeInkDisplay::requestResync(uint8_t settlePasses) {
+   if (_driver) _driver->requestResync(settlePasses);
+ }
+ 
++void FreeInkDisplay::setTextAaMode(const uint8_t mode) {
++  if (_driver) _driver->setTextAaMode(mode);
++}
++
++void FreeInkDisplay::setInvertedGrayscale(const bool prepared) {
++  if (_driver) _driver->setInvertedGrayscale(prepared);
++}
++
+ void FreeInkDisplay::setReaderRefresh(const bool reading) {
+   if (_driver) _driver->setReaderRefresh(reading);
+ }
+diff --git a/libs/display/FreeInkDisplay/src/driver/PanelDriver.h b/libs/display/FreeInkDisplay/src/driver/PanelDriver.h
+index fa986b4..16fa930 100644
+--- a/libs/display/FreeInkDisplay/src/driver/PanelDriver.h
++++ b/libs/display/FreeInkDisplay/src/driver/PanelDriver.h
+@@ -233,6 +233,11 @@ class PanelDriver {
+     (void)hook;
+     (void)ctx;
+   }
++  // The caller's gray masks are prepared for an inverted page. Drivers that
++  // only support that on request gate grayscaleWhileInverted() on it.
++  virtual void setInvertedGrayscale(bool prepared) { (void)prepared; }
++  // One-pass text composition variant (0 standard, 1 state-aware, 2 raw codes); see X4ProTextAa::Mode.
++  virtual void setTextAaMode(uint8_t mode) { (void)mode; }
+   virtual void skipInitialResync() {}
+   // Content-polarity hint: true while the facade is rendering inverted (dark
+   // background) frames. Differential drivers idle unchanged pixels, so on a
+diff --git a/libs/display/FreeInkDisplay/src/driver/Uc8279X4Driver.cpp b/libs/display/FreeInkDisplay/src/driver/Uc8279X4Driver.cpp
+index 7ecfd93..6444554 100644
+--- a/libs/display/FreeInkDisplay/src/driver/Uc8279X4Driver.cpp
++++ b/libs/display/FreeInkDisplay/src/driver/Uc8279X4Driver.cpp
+@@ -605,7 +605,7 @@ void Uc8279X4Driver::deepSleep(EpdBus& bus) {
+ // conflated them → white-text ghosting). plane0/LSB -> DTM1 (0x10),
+ // plane1/MSB -> DTM2 (0x13).
+ GrayscaleCapabilities Uc8279X4Driver::grayscaleCapabilities(GrayscaleMode mode) const {
+-  if (mode == GrayscaleMode::Overlay && _readerRefresh && _textAa.ready())
++  if (mode == GrayscaleMode::Overlay && _readerRefresh && _textAa.ready() && !_darkBackground)
+     return {GrayscaleEncoding::OverlayMasks, GrayscaleBase::Combined, true, false, false};
+   // Firmware 26110201 adds an explicit ZHX quality packet for Pro 0x67.
+   if (BoardConfig::ACTIVE.displayControllerVariant == 0x67 && !selectImagePacket()) return {};
+@@ -618,7 +618,7 @@ GrayscaleCapabilities Uc8279X4Driver::grayscaleCapabilities(GrayscaleMode mode)
+ 
+ void Uc8279X4Driver::beginGrayscale(EpdBus& bus, const uint8_t* fb, GrayscaleMode mode, RefreshMode fallback,
+                                     bool turnOff) {
+-  if (mode == GrayscaleMode::Overlay && _readerRefresh && _textAa.ready()) {
++  if (mode == GrayscaleMode::Overlay && _readerRefresh && _textAa.ready() && !_darkBackground) {
+     if (fallback != RefreshMode::Fast || _needFullClear) display(bus, fb, nullptr, fallback, false);
+     _absoluteInput = false;
+     _textAa.begin(fb);
+@@ -749,10 +749,13 @@ void Uc8279X4Driver::displayGray(EpdBus& bus, const uint8_t* fb, bool turnOff, c
+     bus.data(_cfg.psr0);
+     bus.data(_cfg.psr1);
+     bus.cmd(CMD_DISPLAY_REFRESH);
++    // The charge/history update reads only the composed planes already sent, so
++    // it runs while the waveform does instead of after it; a failed refresh
++    // below discards it.
++    _textAa.finish(15, -2, -2, -20);
+     bus.waitRefreshComplete("UC8279 one-pass text AA");
+     if (bus.isBusy()) { _textAa.invalidate(); _needFullClear = true; return; }
+     _grayRefreshedOnce = true;
+-    _textAa.finish(15, -2, -2, -20);
+     bus.cmd(CMD_PLL);
+     bus.data(_cfg.pll);
+     _needFullClear = false;
+diff --git a/libs/display/FreeInkDisplay/src/driver/Uc8279X4Driver.h b/libs/display/FreeInkDisplay/src/driver/Uc8279X4Driver.h
+index 38bf46d..056b8d9 100644
+--- a/libs/display/FreeInkDisplay/src/driver/Uc8279X4Driver.h
++++ b/libs/display/FreeInkDisplay/src/driver/Uc8279X4Driver.h
+@@ -87,6 +87,14 @@ class Uc8279X4Driver : public PanelDriver {
+   void displayWindow(EpdBus& bus, const uint8_t* fb, const uint8_t* prev, uint16_t x, uint16_t y, uint16_t w,
+                      uint16_t h, bool turnOff) override;
+   bool supportsAsyncDisplay() const override { return true; }
++  // Night mode: the one-pass text waveform has no hold for a black background,
++  // so inverted pages keep the two-pass overlay (B/W base, then gray masks).
++  void setBackgroundHint(bool darkBackground) override { _darkBackground = darkBackground; }
++  void setInvertedGrayscale(bool prepared) override { _invertedGrayscale = prepared; }
++  void setTextAaMode(uint8_t mode) override {
++    _textAa.setMode(mode == 1 ? X4ProTextAa::Mode::StateAware : mode == 2 ? X4ProTextAa::Mode::Raw : X4ProTextAa::Mode::Standard);
++  }
++  bool grayscaleWhileInverted() const override { return _invertedGrayscale; }
+ 
+   void requestResync(uint8_t settlePasses) override;
+   void skipInitialResync() override;
+@@ -126,6 +134,8 @@ class Uc8279X4Driver : public PanelDriver {
+  private:
+   X4ProTextAa _textAa;
+   bool _readerRefresh = false;
++  bool _darkBackground = false;
++  bool _invertedGrayscale = false;
+   void initController(EpdBus& bus);
+   void startBwRefresh(EpdBus& bus, bool fast);
+   // Stream a framebuffer into a RAM plane: 0xFF padding for gates before the
+diff --git a/libs/display/FreeInkDisplay/src/driver/X4ProTextAa.h b/libs/display/FreeInkDisplay/src/driver/X4ProTextAa.h
+index 61ab684..a95084a 100644
+--- a/libs/display/FreeInkDisplay/src/driver/X4ProTextAa.h
++++ b/libs/display/FreeInkDisplay/src/driver/X4ProTextAa.h
+@@ -18,7 +18,8 @@ public:
+   X4ProTextAa &operator=(const X4ProTextAa &) = delete;
+ 
+   // Sized to the panel: one 1bpp plane is widthBytes x height bytes; the
+-  // helper holds 12 of them (three planes, an ink plane, a byte per pixel).
++  // helper holds 16 of them (three planes, an ink plane, a byte per pixel,
++  // then the packed charge mask and three state-aware history planes).
+   void allocate(bool enabled, uint16_t widthBytes, uint16_t height) {
+     const uint32_t size = static_cast<uint32_t>(widthBytes) * height;
+     if (size != _size) {
+@@ -32,10 +33,23 @@ public:
+ #if defined(BOARD_HAS_PSRAM)
+     if (_enabled && !_storage)
+       _storage = static_cast<uint8_t *>(
+-          heap_caps_malloc(size * 12, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
++          heap_caps_malloc(size * 16, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+ #endif
+     invalidate();
+   }
++  // How compose() reads the staged planes.
++  //   Standard:   overlay masks; any masked pixel takes the one gray.
++  //   StateAware: experimental. hi = edge pixel (light or dark gray value),
++  //               lo = the caller's "use gray" choice for it, base 0 = dark-gray
++  //               or black value. Edge pixels that held ink on the previous
++  //               page take a pattern chosen from what was there.
++  //   Raw:        diagnostic. The planes already hold drive codes.
++  enum class Mode : uint8_t { Standard, StateAware, Raw };
++  void setMode(Mode mode) {
++    if (mode == _mode) return;
++    _mode = mode;
++    invalidate();
++  }
+   bool ready() const { return _enabled && _storage != nullptr; }
+   bool active() const { return _active; }
+   bool onPanel() const { return _onPanel; }
+@@ -79,18 +93,43 @@ public:
+     auto *lo = _storage + _size;
+     auto *hi = _storage + _size * 2;
+     const auto *ink = _storage + _size * 3;
+-    const auto *charge = reinterpret_cast<const int8_t *>(_storage + _size * 4);
+-    const int threshold =
+-        _median + 11; // ceil(10 * 1024 / 998), stock threshold mask.
++    // finish() packed "charge above the threshold" into one bit per pixel, so
++    // this stays a byte-wide pass ahead of the refresh.
++    const auto *charged = _storage + _size * 12;
++    if (_mode == Mode::Raw) return true;
++    if (_mode == Mode::StateAware) {
++      const auto *wasGray = _storage + _size * 13;
++      auto *nowInk = _storage + _size * 14;
++      auto *nowGray = _storage + _size * 15;
++      for (uint32_t i = 0; i < _size; ++i) {
++        const uint8_t base = _storage[i], edge = hi[i], useGray = lo[i];
++        const uint8_t light = edge & base, dark = edge & ~base;
++        const uint8_t black = ~base & ~edge, white = base & ~edge;
++        // Without history every pixel is treated as coming from white.
++        const uint8_t pInk = _history ? ink[i] : 0;
++        const uint8_t pGray = pInk & wasGray[i], pBlack = pInk & ~wasGray[i], pWhite = ~pInk;
++        const uint8_t toBlack = black | (pWhite & dark & ~useGray) | (pGray & black);
++        const uint8_t toGray = (pWhite & edge & useGray) | (pGray & dark);
++        // Hold on old ink: a gray pixel stays near light gray, a black one near dark gray.
++        const uint8_t keep = (pGray & light) | (pBlack & dark);
++        const uint8_t toWhite = static_cast<uint8_t>(~(toBlack | toGray | keep));
++        uint8_t hold = _history ? static_cast<uint8_t>(toWhite & pWhite) : 0;
++        if (_chargeValid) hold &= static_cast<uint8_t>(~charged[i]);
++        const uint8_t erase = toWhite & ~hold;
++        (void)white;
++        lo[i] = toGray | erase;
++        hi[i] = keep | hold | erase;
++        nowInk[i] = toBlack | toGray | keep;
++        nowGray[i] = toGray | (keep & pGray);
++      }
++      return true;
++    }
+     for (uint32_t i = 0; i < _size; ++i) {
+       const uint8_t gray = lo[i] | hi[i];
+       const uint8_t white = _storage[i] & ~gray;
+       uint8_t hold = _history ? static_cast<uint8_t>(white & ~ink[i]) : 0;
+-      if (_chargeValid) {
+-        for (unsigned bit = 0; bit < 8; ++bit)
+-          if (charge[i * 8 + bit] > threshold)
+-            hold &= static_cast<uint8_t>(~(0x80 >> bit));
+-      }
++      if (_chargeValid)
++        hold &= static_cast<uint8_t>(~charged[i]);
+       lo[i] = gray | (white & ~hold);
+       hi[i] = white;
+     }
+@@ -147,6 +186,26 @@ public:
+         break;
+       }
+     }
++    // Pixels whose charge needs another white pulse on the next page.
++    const int threshold =
++        _median + 11; // ceil(10 * 1024 / 998), stock threshold mask.
++    auto *charged = _storage + _size * 12;
++    for (uint32_t i = 0; i < _size; ++i) {
++      uint8_t mask = 0;
++      for (unsigned bit = 0; bit < 8; ++bit)
++        if (charge[i * 8 + bit] > threshold)
++          mask |= static_cast<uint8_t>(0x80 >> bit);
++      charged[i] = mask;
++    }
++    // What each pixel now shows, for the state-aware mode's next page.
++    auto *wasGray = _storage + _size * 13;
++    if (_mode == Mode::StateAware) {
++      memcpy(ink, _storage + _size * 14, _size);
++      memcpy(wasGray, _storage + _size * 15, _size);
++    } else {
++      for (uint32_t i = 0; i < _size; ++i)
++        wasGray[i] = static_cast<uint8_t>(~high()[i] & low()[i]);
++    }
+     _active = false;
+     _history = _chargeValid = _onPanel = true;
+   }
+@@ -157,6 +216,7 @@ private:
+   uint16_t _wb = 0, _h = 0;
+   uint16_t _rows[2] = {};
+   int _median = 0;
++  Mode _mode = Mode::Standard;
+   bool _enabled = false;
+   bool _active = false, _onPanel = false, _history = false,
+        _chargeValid = false, _failed = false;
+diff --git a/libs/hardware/BoardConfig/include/BoardConfig.h b/libs/hardware/BoardConfig/include/BoardConfig.h
+index a077b3d..f748ef2 100644
+--- a/libs/hardware/BoardConfig/include/BoardConfig.h
++++ b/libs/hardware/BoardConfig/include/BoardConfig.h
+@@ -1020,6 +1020,11 @@ constexpr BatteryGaugeConfig NO_GAUGE = {PIN_UNASSIGNED, PIN_UNASSIGNED, 0, 0, 0
+ // Shared display SPI default for every Xteink board and controller variant.
+ constexpr uint32_t XTEINK_DISPLAY_SPI_HZ = 10000000u;
+ 
++// X4 Pro display SPI clock. A build may raise it once validated on its own panel.
++#ifndef FREEINK_X4PRO_DISPLAY_SPI_HZ
++#define FREEINK_X4PRO_DISPLAY_SPI_HZ XTEINK_DISPLAY_SPI_HZ
++#endif
++
+ // --- Xteink X4 — ESP32-C3, SSD1677 (800x480) ---------------------------------
+ // Default 10 MHz, like the other Xteink profiles. Preserve the explicit legacy
+ // 40 MHz opt-in for consumers that have validated it on their hardware.
+@@ -1895,7 +1900,7 @@ constexpr BoardProfile XTEINK_X4_PRO = {
+     // needed. GPIO1 also triggers a refresh when toggled (likely a panel power
+     // enable), but the panel works without driving it, so powerEnable stays unset.
+     {12, 11, 13, 18, 14, 6, PIN_UNASSIGNED},
+-    XTEINK_DISPLAY_SPI_HZ,  // displaySpiHz: 10 MHz across SSD1677/UC8179/UC8279 batches
++    FREEINK_X4PRO_DISPLAY_SPI_HZ,  // displaySpiHz: 10 MHz across SSD1677/UC8179/UC8279 batches unless overridden
+     // SD is native SDMMC (see the sdmmc field below) — the card is silent to SPI-mode CMD0 on
+     // hardware. This SPI SdPins entry is retained only for its powerEnable=GPIO5, the SD enable
+     // used by the SDMMC mount path. GPIO5 is ACTIVE-LOW: SdmmcBlockDevice pulses it HIGH→LOW

@@ -221,7 +221,7 @@ inline void displayBaseWithRefreshCycle(const GfxRenderer& renderer, int& pagesU
 
 // Book page presentation: lets the panel use its reading waveform.
 struct ReaderRefreshScope {
-  ReaderRefreshScope() { display.setReaderRefresh(true); }
+  explicit ReaderRefreshScope(const bool reading = true) { display.setReaderRefresh(reading); }
   ~ReaderRefreshScope() { display.setReaderRefresh(false); }
   ReaderRefreshScope(const ReaderRefreshScope&) = delete;
   ReaderRefreshScope& operator=(const ReaderRefreshScope&) = delete;

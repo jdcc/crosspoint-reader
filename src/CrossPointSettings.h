@@ -299,6 +299,10 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t characterSpacing = CHARACTER_SPACING_OFFSET;
   int8_t getCharacterSpacing() const { return static_cast<int8_t>(characterSpacing - CHARACTER_SPACING_OFFSET); }
   uint8_t textAntiAliasing = 1;
+  // X4 Pro day-mode text: one refresh with a single gray level, or two refreshes with both.
+  // Experimental is Fast with edge tones also chosen from the previous page's ink.
+  enum TEXT_AA_STYLE : uint8_t { TEXT_AA_FAST = 0, TEXT_AA_SMOOTH = 1, TEXT_AA_EXPERIMENT = 2, TEXT_AA_STYLE_COUNT };
+  uint8_t textAaStyle = TEXT_AA_FAST;
   // Short power button click behaviour
   uint8_t shortPwrBtn = IGNORE;
   // Power double click (see hasPowerDoubleClick()); Ignore disables the

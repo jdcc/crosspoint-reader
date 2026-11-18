@@ -35,6 +35,7 @@ enum Color : uint8_t { Clear = 0x00, White = 0x01, LightGray = 0x05, DarkGray = 
 class GfxRenderer {
  public:
   enum RenderMode { BW, GRAYSCALE_LSB, GRAYSCALE_MSB };
+  enum class TextPlanes : uint8_t { Normal, NoGrayPass, InvertedGrayPass, SingleGray };
   enum class DitherMode { Replace, PreserveInk };
 
   // Logical screen orientation from the perspective of callers
@@ -52,6 +53,7 @@ class GfxRenderer {
   RenderMode renderMode;
   mutable bool absoluteGrayPlanes = false;
   bool ditherImagesInBw = false;
+  TextPlanes textPlanes = TextPlanes::Normal;
   Orientation orientation;
   bool fadingFix;
   uint8_t* frameBuffer = nullptr;
@@ -441,6 +443,14 @@ class GfxRenderer {
   // "any ink is black". Only for pages that get no image grayscale pass,
   // because overlay gray planes expect every gray pixel black in the base.
   void setDitherImagesInBw(bool enabled) { ditherImagesInBw = enabled; }
+  // Which glyph values each text pass paints. B/W text normally paints its gray
+  // edge pixels as ink and relies on the gray pass to lighten them.
+  // NoGrayPass: no gray pass will follow, so the light-gray fringe is left out.
+  // InvertedGrayPass: night mode with a gray pass; the base paints full ink only
+  // and the gray masks are chosen for a black background.
+  // SingleGray: the panel shows one gray level. The base leaves light-gray values
+  // white and the caller decides per pixel which edge values take the gray.
+  void setTextPlanes(TextPlanes planes) { textPlanes = planes; }
   bool imagesDitheredInBw() const { return ditherImagesInBw; }
 
   // Tiled grayscale (X4): stream one band of a plane straight to controller RAM

@@ -643,9 +643,18 @@ void GfxRenderer::drawGlyphBitmap(const uint8_t* bitmap, const int width, const 
   physical.dyX = nextX - physical.x;
   physical.dyY = nextY - physical.y;
 
-  const glyphBitmap::Plane plane = mode == BW              ? glyphBitmap::Plane::BW
-                                   : mode == GRAYSCALE_MSB ? glyphBitmap::Plane::GrayMSB
-                                                           : glyphBitmap::Plane::GrayLSB;
+  const bool inverted = textPlanes == TextPlanes::InvertedGrayPass;
+  const bool singleGray = textPlanes == TextPlanes::SingleGray;
+  glyphBitmap::Plane plane;
+  if (mode == BW) {
+    plane = inverted                                               ? glyphBitmap::Plane::BWCore
+            : (singleGray || textPlanes == TextPlanes::NoGrayPass) ? glyphBitmap::Plane::BWThin
+                                                                   : glyphBitmap::Plane::BW;
+  } else if (mode == GRAYSCALE_MSB) {
+    plane = glyphBitmap::Plane::GrayMSB;
+  } else {
+    plane = inverted ? glyphBitmap::Plane::GrayLSBDark : glyphBitmap::Plane::GrayLSB;
+  }
   glyphBitmap::draw(bitmap, width, height, twoBit, plane, state, target, clip);
 }
 

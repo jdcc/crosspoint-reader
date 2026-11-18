@@ -17,6 +17,7 @@
 #include <Memory.h>
 #include <TrustedTime.h>
 #include <WiFi.h>
+#include <esp_heap_caps.h>
 #include <esp_system.h>
 
 #include <algorithm>
@@ -33,6 +34,7 @@
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "DictionaryWordSelectActivity.h"
+#include "DrivePatternPatches.h"
 #include "EpubReaderBookmarksActivity.h"
 #include "EpubReaderChapterSelectionActivity.h"
 #include "EpubReaderClippingListActivity.h"
@@ -53,6 +55,7 @@
 #include "SdCardFont.h"
 #include "SdCardFontSystem.h"
 #include "SilentRestart.h"
+#include "SingleGrayEdges.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "activities/settings/TextSettingsActivity.h"
 #include "clippings/ClippingText.h"
@@ -62,6 +65,8 @@
 #include "util/BookmarkUtil.h"
 #include "util/ButtonNavigator.h"
 #include "util/ScreenshotUtil.h"
+
+extern int benchPlane;  // bench diagnostic (main.cpp)
 
 namespace {
 // The X4 Pro and X4 Classic carry the X4's panel but sit outside isXteinkDevice()
@@ -2172,14 +2177,64 @@ void EpubReaderActivity::rememberCurrentContentOffset() {
 void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int orientedMarginTop,
                                         const int orientedMarginRight, const int orientedMarginBottom,
                                         const int orientedMarginLeft) {
-  const ReaderUtils::ReaderRefreshScope readerRefresh;
+  // The X4 Pro's reading waveform is its one-refresh text path; Smooth keeps the two-refresh one.
+  const ReaderUtils::ReaderRefreshScope readerRefresh(
+      !(BoardConfig::isX4Pro() && SETTINGS.textAaStyle == CrossPointSettings::TEXT_AA_SMOOTH));
   const auto t0 = millis();
   const int fontId = SETTINGS.getReaderFontId();
+  const bool stateAwareText = BoardConfig::isX4Pro() && SETTINGS.textAaStyle == CrossPointSettings::TEXT_AA_EXPERIMENT;
+  if (benchPlane == 9) {
+    benchPlane = 0;
+    pageBufferStale = true;
+    ReaderUtils::showDrivePatternPatches(renderer);
+    return;
+  }
+  if (benchPlane != 0) {
+    // Bench diagnostic: leave one unmodified glyph plane in the framebuffer, undisplayed.
+    renderer.setTextPlanes(GfxRenderer::TextPlanes::Normal);
+    renderer.setRenderMode(benchPlane == 1   ? GfxRenderer::BW
+                           : benchPlane == 2 ? GfxRenderer::GRAYSCALE_LSB
+                                             : GfxRenderer::GRAYSCALE_MSB);
+    renderer.clearScreen(benchPlane == 1 ? 0xFF : 0x00);
+    page->render(renderer, fontId, orientedMarginLeft, orientedMarginTop);
+    renderer.setRenderMode(GfxRenderer::BW);
+    benchPlane = 0;
+    pageBufferStale = true;
+    return;
+  }
   ImageBlock::clearRenderFailures();
 
   struct PxcSlotGuard {
     ~PxcSlotGuard() { ImageBlock::releaseRenderCache(); }
   } pxcSlotGuard;
+
+  // Night mode changes which glyph values each pass paints: with a gray pass the
+  // base holds full ink only and the masks suit a black background; without one
+  // the B/W text drops its light-gray fringe so it is not heavier.
+  struct TextPlanesScope {
+    GfxRenderer& renderer;
+    ~TextPlanesScope() {
+      renderer.setTextPlanes(GfxRenderer::TextPlanes::Normal);
+      display.setInvertedGrayscale(false);
+    }
+  } textPlanesScope{renderer};
+  // Only the X4 Pro panel takes gray masks drawn for an inverted page.
+  const bool nightMode = display.isInverted() && BoardConfig::isX4Pro();
+  bool singleGrayText = false;
+  if (SETTINGS.textAntiAliasing) {
+    // Panels that can overlay grays on an inverted page do so only on request.
+    display.setInvertedGrayscale(nightMode);
+    if (!renderer.grayscaleCapabilities().supported()) {
+      renderer.setTextPlanes(GfxRenderer::TextPlanes::NoGrayPass);
+    } else if (nightMode) {
+      renderer.setTextPlanes(GfxRenderer::TextPlanes::InvertedGrayPass);
+    } else if (BoardConfig::isX4Pro() && renderer.grayscaleCapabilities().base == HalDisplay::GrayscaleBase::Combined &&
+               !(SETTINGS.imageRendering != CrossPointSettings::IMAGES_DISPLAY_BW && page->hasImages())) {
+      // The one-pass text waveform has a single gray level.
+      renderer.setTextPlanes(GfxRenderer::TextPlanes::SingleGray);
+      singleGrayText = true;
+    }
+  }
 
   auto* fcm = renderer.getFontCacheManager();
   auto scope = fcm->createPrewarmScope();
@@ -2193,7 +2248,8 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
 
   // Black & White images: the page turns as plain B/W, images dither in the
   // B/W pass and text keeps its usual anti-aliasing.
-  const bool imageGrayscale = SETTINGS.imageRendering != CrossPointSettings::IMAGES_DISPLAY_BW;
+  // Night mode dithers images in the B/W pass: the gray masks are text-only there.
+  const bool imageGrayscale = SETTINGS.imageRendering != CrossPointSettings::IMAGES_DISPLAY_BW && !nightMode;
   struct DitherScope {
     GfxRenderer& renderer;
     ~DitherScope() { renderer.setDitherImagesInBw(false); }
@@ -2250,6 +2306,14 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   page->render(renderer, fontId, orientedMarginLeft, orientedMarginTop);
   renderStatusBar();
   const auto tBwRender = millis();
+
+  // The state-aware composer reads planes only the single-gray path below
+  // writes. Other pages (images, night mode) keep standard masks. Set before
+  // the base is staged: a mode change clears the panel's staged planes.
+  const bool singleGrayPlanes = singleGrayText && combinedGrayscaleBase &&
+                                renderer.getDisplayWidthBytes() <= ReaderUtils::SINGLE_GRAY_MAX_WIDTH_BYTES;
+  const bool stateAwarePlanes = stateAwareText && singleGrayPlanes;
+  display.setTextAaMode(stateAwarePlanes ? 1 : 0);
 
   if (absoluteImageGrayscale) {
     const auto baseMode = cleanImageBasePending ? HalDisplay::HALF_REFRESH : HalDisplay::FAST_REFRESH;
@@ -2344,10 +2408,25 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
               tPrewarm - t0, tBwRender - tPrewarm, tDisplay - tBwRender, tGrayRender - tDisplay, tWait - tGrayRender,
               tGrayWrite - tWait, tGrayDisplay - tGrayWrite, tEnd - tGrayDisplay, tEnd - t0, msbPlaneBuf ? 2 : 1);
     } else {
-      auto scratch = makeUniqueNoThrow<uint8_t[]>(static_cast<size_t>(gwBytes) * STRIP_ROWS);
+      // With PSRAM, a full-height scratch renders each gray plane in one pass
+      // instead of one pass per strip. It lives only for this page.
+      int stripRows = STRIP_ROWS;
+      std::unique_ptr<uint8_t, void (*)(void*)> scratch(nullptr, free);
+#if defined(BOARD_HAS_PSRAM)
+      scratch.reset(static_cast<uint8_t*>(heap_caps_malloc(planeBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)));
+      if (scratch) stripRows = gh;
+      // Single-gray text needs both masks at once to choose each edge pixel's tone.
+      std::unique_ptr<uint8_t, void (*)(void*)> grayPlane(nullptr, free);
+      if (scratch && singleGrayPlanes)
+        grayPlane.reset(static_cast<uint8_t*>(heap_caps_malloc(planeBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)));
+#else
+      const std::unique_ptr<uint8_t, void (*)(void*)> grayPlane(nullptr, free);
+#endif
+      if (!scratch) scratch.reset(static_cast<uint8_t*>(malloc(static_cast<size_t>(gwBytes) * STRIP_ROWS)));
       renderer.waitRefreshComplete();
-      if (!scratch) {
-        LOG_ERR("ERS", "OOM: grayscale strip scratch (%d bytes); skipping AA this page", gwBytes * STRIP_ROWS);
+      // State-aware planes cannot be written without the second buffer.
+      if (!scratch || (stateAwarePlanes && !grayPlane)) {
+        LOG_ERR("ERS", "OOM: grayscale scratch; skipping AA this page");
         if (overlapRefresh || combinedGrayscaleBase) {
           // The BW refresh ran the shadow-free async path, so controller RAM's
           // differential baseline was never rebuilt. Even with AA skipped it must
@@ -2364,24 +2443,31 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
         }
       } else {
         renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
-        for (int y = 0; y < gh; y += STRIP_ROWS) {
-          const int rows = (gh - y < STRIP_ROWS) ? (gh - y) : STRIP_ROWS;
+        for (int y = 0; y < gh; y += stripRows) {
+          const int rows = (gh - y < stripRows) ? (gh - y) : stripRows;
           renderer.beginStripTarget(scratch.get(), y, rows);
           renderer.clearScreen(absoluteImageGrayscale ? 0xFF : 0x00);
           renderGrayscalePass();
           renderer.endStripTarget();
-          renderer.writeGrayscalePlaneStrip(true, scratch.get(), y, rows);
+          if (!grayPlane) renderer.writeGrayscalePlaneStrip(true, scratch.get(), y, rows);
         }
         const auto tGrayLsb = millis();
 
         renderer.setRenderMode(GfxRenderer::GRAYSCALE_MSB);
-        for (int y = 0; y < gh; y += STRIP_ROWS) {
-          const int rows = (gh - y < STRIP_ROWS) ? (gh - y) : STRIP_ROWS;
-          renderer.beginStripTarget(scratch.get(), y, rows);
+        for (int y = 0; y < gh; y += stripRows) {
+          const int rows = (gh - y < stripRows) ? (gh - y) : stripRows;
+          renderer.beginStripTarget(grayPlane ? grayPlane.get() : scratch.get(), y, rows);
           renderer.clearScreen(absoluteImageGrayscale ? 0xFF : 0x00);
           renderGrayscalePass();
           renderer.endStripTarget();
-          renderer.writeGrayscalePlaneStrip(false, scratch.get(), y, rows);
+          if (!grayPlane) renderer.writeGrayscalePlaneStrip(false, scratch.get(), y, rows);
+        }
+        if (grayPlane) {
+          // One gray level: both planes carry the same per-pixel choice.
+          ReaderUtils::singleGrayEdgeMask(renderer.getFrameBuffer(), scratch.get(), grayPlane.get(), gwBytes, gh);
+          renderer.writeGrayscalePlaneStrip(true, scratch.get(), 0, gh);
+          // The state-aware composer also wants every edge pixel, to re-tone those over old ink.
+          renderer.writeGrayscalePlaneStrip(false, stateAwarePlanes ? grayPlane.get() : scratch.get(), 0, gh);
         }
         const auto tGrayMsb = millis();
 

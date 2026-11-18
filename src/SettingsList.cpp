@@ -123,6 +123,11 @@ void forEachBaseSetting(SettingVisitor visit, void* context) {
   emit(SettingInfo::Toggle(StrId::STR_TEXT_AA, &CrossPointSettings::textAntiAliasing, "textAntiAliasing",
                            StrId::STR_CAT_READER)
            .withTextSettings());
+  // Only the X4 Pro panel has both a one-refresh and a two-refresh text path.
+  if (BoardConfig::isX4Pro())
+    emit(SettingInfo::Enum(StrId::STR_TEXT_AA_STYLE, &CrossPointSettings::textAaStyle,
+                           {StrId::STR_TEXT_AA_FAST, StrId::STR_TEXT_AA_SMOOTH, StrId::STR_TEXT_AA_EXPERIMENT},
+                           "textAaStyle", StrId::STR_CAT_READER));
   emit(SettingInfo::Enum(StrId::STR_IMAGES, &CrossPointSettings::imageRendering,
                          {StrId::STR_IMAGES_DISPLAY, StrId::STR_IMAGES_PLACEHOLDER, StrId::STR_IMAGES_SUPPRESS,
                           StrId::STR_IMAGES_DISPLAY_BW},

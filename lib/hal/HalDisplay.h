@@ -23,6 +23,10 @@ class HalDisplay {
   void setReaderRefresh(bool reading) { einkDisplay.setReaderRefresh(reading); }
   // True asks text-overlay gray passes for every gray level (image pages).
   void setOverlayFullTone(bool fullTone) { einkDisplay.setOverlayFullTone(fullTone); }
+  // The gray masks that follow were drawn for an inverted (night mode) page.
+  void setInvertedGrayscale(bool prepared) { einkDisplay.setInvertedGrayscale(prepared); }
+  // One-pass text composition variant on panels that have one (0 standard, 1 state-aware, 2 raw codes).
+  void setTextAaMode(uint8_t mode) { einkDisplay.setTextAaMode(mode); }
   bool displayRetainedGrayscaleOverlay(uint16_t x, uint16_t y, uint16_t w, uint16_t h, bool restore) {
     return einkDisplay.displayRetainedGrayscaleOverlay(x, y, w, h, restore);
   }
