@@ -3378,6 +3378,9 @@ void EpubReaderActivity::navigateToHref(const std::string& hrefStr, const bool s
   {
     RenderLock lock;
     clearDeferredReposition();
+    // A page turn queued before the jump must not run on the page it lands on.
+    pendingManualTurn = 0;
+    pendingPageJump.reset();
     pendingAnchor = std::move(anchor);
     currentSpineIndex = targetSpineIndex;
     nextPageNumber = 0;
@@ -3442,6 +3445,8 @@ void EpubReaderActivity::restoreSavedPosition() {
   {
     RenderLock lock;
     clearDeferredReposition();
+    pendingManualTurn = 0;
+    pendingPageJump.reset();
     currentSpineIndex = pos.spineIndex;
     nextPageNumber = pos.pageNumber;
     section.reset();
