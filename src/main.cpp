@@ -221,6 +221,17 @@ void toggleFrontlight() {
   LOG_INF("LIGHT", "Frontlight toggled %s", lightOn ? "on" : "off");
 }
 
+void toggleNightMode() {
+  // The slide switch's position stays the source of truth when it is bound to night mode.
+  if (slideSwitchOwns(CrossPointSettings::SLIDE_SWITCH_NIGHT_MODE)) return;
+  SETTINGS.screenInverted = SETTINGS.screenInverted ? 0 : 1;
+  SETTINGS.saveToFile();
+  // Inversion rewrites every pixel; a clean waveform avoids a ghost of the old polarity.
+  renderer.promoteNextRefresh(HalDisplay::HALF_REFRESH);
+  activityManager.requestUpdate();
+  LOG_INF("MAIN", "Night mode toggled %s", SETTINGS.screenInverted ? "on" : "off");
+}
+
 // Applies the slide switch's position to the bound function at boot, on each
 // change, and when its binding changes; the physical position stays the source
 // of truth, as on stock.
@@ -1031,6 +1042,9 @@ void loop() {
   // Refresh screen when power button is short-pressed with FORCE_REFRESH setting.
   if (mappedInputManager.homeButtonAction() == HomeButtonAction::ToggleFrontlight) {
     toggleFrontlight();
+  }
+  if (mappedInputManager.homeButtonAction() == HomeButtonAction::ToggleNightMode) {
+    toggleNightMode();
   }
   if (mappedInputManager.homeButtonAction() == HomeButtonAction::Refresh ||
       (SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::FORCE_REFRESH &&
