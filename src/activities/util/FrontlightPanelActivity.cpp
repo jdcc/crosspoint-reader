@@ -42,9 +42,8 @@ constexpr int16_t kQuickIconSize = 32;
 // One percent per press, on the -/+ buttons and on the physical Left/Right keys
 // alike (both repeat while held), so a level can be set exactly.
 constexpr int BRIGHTNESS_STEP = 1;
-// The dimmest setting is 1%, not 0: turning the light off is what the lamp
-// button next to the slider is for, so a 0% "on" level would only be a second,
-// worse way to reach the same place.
+// The dimmest lit level. Going below it (slider at its left end, or - at 1%)
+// turns the light off.
 constexpr uint8_t MIN_BRIGHTNESS = 1;
 
 uint8_t percentFromPermille(const int16_t permille) {
@@ -111,13 +110,7 @@ void FrontlightPanelActivity::onExit() {
 void FrontlightPanelActivity::onBrightnessEvent(const fui::ActionEvent& event, void* user) {
   auto* self = static_cast<FrontlightPanelActivity*>(user);
   if (event.dragPermille < 0) return;
-  self->brightness = std::max(MIN_BRIGHTNESS, percentFromPermille(event.dragPermille));
-  Frontlight.setBrightness(self->brightness);
-  if (!self->lightOn && !slideSwitchOwnsLight()) {
-    self->lightOn = true;
-    self->lightOnChanged = true;
-    Frontlight.setOn(true);
-  }
+  self->setLevel(percentFromPermille(event.dragPermille));
 }
 
 void FrontlightPanelActivity::onWarmthEvent(const fui::ActionEvent& event, void* user) {
@@ -195,19 +188,36 @@ void FrontlightPanelActivity::runTile(const int idx) {
   }
 }
 
-void FrontlightPanelActivity::adjustBrightness(const int delta) {
-  int next = static_cast<int>(brightness) + delta;
-  if (next < MIN_BRIGHTNESS) next = MIN_BRIGHTNESS;
-  if (next > 100) next = 100;
-  if (next == brightness) return;
-  brightness = static_cast<uint8_t>(next);
+uint8_t FrontlightPanelActivity::shownLevel() const {
+  // While the slide switch owns on/off, the slider only ever sets the level.
+  return lightOn || slideSwitchOwnsLight() ? brightness : 0;
+}
+
+bool FrontlightPanelActivity::setLevel(const int percent) {
+  const bool switchOwned = slideSwitchOwnsLight();
+  const bool off = percent < MIN_BRIGHTNESS && !switchOwned;
+  // Off keeps the last lit level for the next switch-on.
+  const uint8_t level =
+      off ? brightness : static_cast<uint8_t>(std::clamp(percent, static_cast<int>(MIN_BRIGHTNESS), 100));
+  const bool on = switchOwned ? lightOn : !off;
+  if (level == brightness && on == lightOn) return false;
+  brightness = level;
   Frontlight.setBrightness(brightness);
-  if (!lightOn && !slideSwitchOwnsLight()) {
-    lightOn = true;
+  if (on != lightOn) {
+    lightOn = on;
     lightOnChanged = true;
-    Frontlight.setOn(true);
+    Frontlight.setOn(on);
   }
-  requestUpdate();
+  return true;
+}
+
+void FrontlightPanelActivity::adjustBrightness(const int delta) {
+  // From off, + switches the light on at its kept level and - does nothing.
+  if (shownLevel() == 0) {
+    if (delta > 0 && setLevel(brightness)) requestUpdate();
+    return;
+  }
+  if (setLevel(brightness + delta)) requestUpdate();
 }
 
 void FrontlightPanelActivity::adjustWarmth(const int delta) {
@@ -319,13 +329,15 @@ void FrontlightPanelActivity::addSliderRow(UiScreen& screen, const char* label, 
   // (immediate mode), so borrowing a stack buffer is safe.
   char pct[8];
   snprintf(pct, sizeof(pct), "%u%%", static_cast<unsigned>(value));
+  // Only the brightness row (the one with the lamp) can be off.
+  const char* readout = showToggle && value == 0 ? tr(STR_STATE_OFF) : pct;
 
   // rowProps is a member (fui::SliderRowProps embeds a 324-byte StyleSet, well
   // past the 256-byte budget a local gets — AGENTS.md). Every field that
   // varies between the two rows is reassigned here; the rest keep their
   // constructed defaults, which already match the panel's card language.
   rowProps.label = label;
-  rowProps.value = pct;
+  rowProps.value = readout;
   rowProps.sliderValue = value;
   rowProps.sliderAction = sliderAction;
   rowProps.decrement = stepAction;
@@ -377,7 +389,7 @@ void FrontlightPanelActivity::buildPanelScreen(UiScreen& screen) {
   }
 
   if (Frontlight.present()) {
-    addSliderRow(screen, tr(STR_BRIGHTNESS), brightness, ACTION_BRIGHTNESS, ACTION_BRIGHTNESS_STEP,
+    addSliderRow(screen, tr(STR_BRIGHTNESS), shownLevel(), ACTION_BRIGHTNESS, ACTION_BRIGHTNESS_STEP,
                  /*showToggle=*/!slideSwitchOwnsLight());
     if (Frontlight.hasColorTemperature()) {
       addSliderRow(screen, tr(STR_WARMTH), warmth, ACTION_WARMTH, ACTION_WARMTH_STEP, /*showToggle=*/false);

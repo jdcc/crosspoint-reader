@@ -55,6 +55,11 @@ class FrontlightPanelActivity final : public Activity, private UiAppHost {
   void addSliderRow(UiScreen& screen, const char* label, uint8_t value, freeink::ui::ActionId sliderAction,
                     freeink::ui::ActionId stepAction, bool showToggle);
   int computePanelBottom() const;
+  // Brightness the slider and readout show: 0 while the light is off.
+  uint8_t shownLevel() const;
+  // Applies a level; below 1% turns the light off unless the slide switch owns
+  // it. Returns true if anything changed.
+  bool setLevel(int percent);
   void adjustBrightness(int delta);
   void adjustWarmth(int delta);
   void toggleLight();
