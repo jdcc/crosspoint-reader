@@ -95,9 +95,10 @@ Response:
 Hidden dotfiles are omitted unless the device setting `showHiddenFiles` is
 enabled. `System Volume Information` and `XTCache` are always hidden/protected.
 
-The saved-credential stores (`/.crosspoint/wifi.json`, `opds.json`,
-`koreader.json`) can never be downloaded, uploaded, renamed, moved, deleted or
-written by a plugin over the network, however the path is spelled.
+The saved credential, token and key stores in `/.crosspoint/` (Wi-Fi, OPDS,
+KOReader, OPDS tokens and LCP files) can never be downloaded, uploaded, renamed,
+moved, deleted or written by a plugin over the network, however the path is
+spelled.
 
 ### `GET /download`
 

@@ -13,6 +13,14 @@ TEST(ProtectedPaths, CredentialStoresAreSensitive) {
   EXPECT_TRUE(isSensitivePath("/.CrossPoint/WIFI.json"));
 }
 
+TEST(ProtectedPaths, TokenAndKeyStoresAreSensitive) {
+  EXPECT_TRUE(isSensitivePath("/.crosspoint/opds_tokens.json"));
+  EXPECT_TRUE(isSensitivePath("/.crosspoint/lcp_passphrases.json"));
+  EXPECT_TRUE(isSensitivePath("/.crosspoint/lcp_device.json"));
+  EXPECT_TRUE(isSensitivePath("/.crosspoint/wireguard.json"));
+  EXPECT_TRUE(isSensitivePath("/.crosspoint/wireguard.json.tmp"));
+}
+
 TEST(ProtectedPaths, SpellingVariantsCannotDodgeTheMatch) {
   EXPECT_TRUE(isSensitivePath("/.crosspoint/./wifi.json"));
   EXPECT_TRUE(isSensitivePath("//.crosspoint//wifi.json"));

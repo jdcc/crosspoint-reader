@@ -257,7 +257,7 @@ JSON catalogs may also map `description`, `detail_author`, and `repository` for 
   "title": "Service Name",                  // menu label; defaults to folder name
 
   // Relative paths are in the plugin's own folder; absolute paths work too.
-  // The credential stores (wifi/opds/koreader .json) are refused.
+  // The credential, token and key stores in /.crosspoint/ are refused.
   "token": {                                // omit for token-less catalogs
     "file": "token.json",                   // written by auth (either side)
     "path": "token"                         // dotted JSON path inside the file
