@@ -352,9 +352,12 @@ void EpubReaderActivity::openReaderMenu() {
     focusedTool = 0;
     panelHoldJumped = false;
     panelCursorShown = !mappedInput.hasTouch();
-    if (!toolbarUi) toolbarUi = std::make_unique<ReaderToolbarUi>(renderer);
-    toolbarUi->begin();
-    discardOverlayPage();
+    {
+      RenderLock lock;  // the render task may be storing or painting the overlay
+      if (!toolbarUi) toolbarUi = std::make_unique<ReaderToolbarUi>(renderer);
+      toolbarUi->begin();
+      discardOverlayPage();
+    }
     requestUpdate();
     return;
   }
@@ -848,8 +851,11 @@ void EpubReaderActivity::loop() {
     }
     // The style was switched off while an overlay was up (Settings reached via
     // the More panel); fall back to the clean page.
-    overlay = Overlay::None;
-    discardOverlayPage();
+    {
+      RenderLock lock;  // the render task reads overlay and the stored page
+      overlay = Overlay::None;
+      discardOverlayPage();
+    }
     requestUpdate();
     return;
   }
@@ -2637,7 +2643,10 @@ std::string EpubReaderActivity::textRowValue(int row) const {
 // the open panel back on top -- the book itself is the preview.
 void EpubReaderActivity::applyTextSettingLive() {
   applyReaderTextSettings();
-  discardOverlayPage();  // the stored page is laid out with the old settings
+  {
+    RenderLock lock;        // the render task stores the page under the overlay
+    discardOverlayPage();  // the stored page is laid out with the old settings
+  }
   requestUpdate();
 }
 
@@ -2788,21 +2797,24 @@ void EpubReaderActivity::openOverlay(Overlay target) {
 // Grayscale panels re-render to restore AA; other boards restore the B/W snapshot.
 void EpubReaderActivity::closeOverlayToPage() {
   mappedInput.resetHomeButtonInput();
-  overlay = Overlay::None;
-  overlayPopup.dismiss();  // an option picker cannot outlive its panel
-  toolbarUi.reset();       // ~1 KB of interaction table + props, only needed while open
-  if (BoardConfig::isEegoA4()) pagesUntilFullRefresh = 1;
-  if (!xteinkClassPanel() && overlayPageStored) {
-    RenderLock lock;  // the render task shares the framebuffer
-    settleOverlayRefresh();
-    // No baseline resync: the glass shows the chrome, and erasing it needs
-    // the differential to keep diffing against the last pushed frame.
-    renderer.restoreBwBuffer(/*resyncPanelBaseline=*/false);
-    overlayPageStored = false;
-    renderer.displayBuffer(HalDisplay::FAST_REFRESH);
-    return;
+  {
+    // The render task may be painting the toolbar this frees, and it shares the framebuffer.
+    RenderLock lock;
+    overlay = Overlay::None;
+    overlayPopup.dismiss();  // an option picker cannot outlive its panel
+    toolbarUi.reset();       // ~1 KB of interaction table + props, only needed while open
+    if (BoardConfig::isEegoA4()) pagesUntilFullRefresh = 1;
+    if (!xteinkClassPanel() && overlayPageStored) {
+      settleOverlayRefresh();
+      // No baseline resync: the glass shows the chrome, and erasing it needs
+      // the differential to keep diffing against the last pushed frame.
+      renderer.restoreBwBuffer(/*resyncPanelBaseline=*/false);
+      overlayPageStored = false;
+      renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+      return;
+    }
+    discardOverlayPage();
   }
-  discardOverlayPage();
   requestUpdate();  // redraw the clean page
 }
 
@@ -2998,11 +3010,11 @@ void EpubReaderActivity::handleOverlayInput() {
       if (panelIndex == 0) {
         // Full font picker (built-in + SD fonts, live preview) -- the same
         // screen Settings uses; a popup cannot scroll a long font list.
-        overlay = Overlay::None;
-        overlayPopup.dismiss();
-        discardOverlayPage();
         {
-          RenderLock lock;  // the picker paints the framebuffer next
+          RenderLock lock;  // the render task reads overlay and the stored page; the picker paints next
+          overlay = Overlay::None;
+          overlayPopup.dismiss();
+          discardOverlayPage();
           settleOverlayRefresh();
         }
         startActivityForResult(std::make_unique<TextSettingsActivity>(renderer, mappedInput, &sdFontSystem.registry(),
@@ -3032,8 +3044,11 @@ void EpubReaderActivity::handleOverlayInput() {
         nextPageNumber = 0;
         section.reset();
       }
-      overlay = Overlay::None;
-      discardOverlayPage();
+      {
+        RenderLock lock;  // the render task reads overlay and the stored page
+        overlay = Overlay::None;
+        discardOverlayPage();
+      }
       requestUpdate();
     } else if (overlay == Overlay::More) {
       activateMoreRow(panelIndex);
@@ -3244,8 +3259,11 @@ void EpubReaderActivity::activateMoreRow(int row) {
                         SETTINGS.orientation % CrossPointSettings::ORIENTATION_COUNT, [this](int idx) {
                           if (idx == SETTINGS.orientation) return;
                           applyOrientation(static_cast<uint8_t>(idx));
-                          // The stored page is laid out for the old orientation.
-                          discardOverlayPage();
+                          {
+                            // The stored page is laid out for the old orientation.
+                            RenderLock lock;
+                            discardOverlayPage();
+                          }
                           requestUpdate();
                         });
       paintOverlayPopup();
@@ -3274,7 +3292,10 @@ void EpubReaderActivity::activateMoreRow(int row) {
     case MA::NIGHT_MODE:
       SETTINGS.screenInverted = SETTINGS.screenInverted == 0 ? 1 : 0;
       SETTINGS.saveToFile();
-      discardOverlayPage();
+      {
+        RenderLock lock;  // the render task stores the page under the overlay
+        discardOverlayPage();
+      }
       requestUpdate();
       return;
     case MA::FRONTLIGHT: {
@@ -3293,17 +3314,19 @@ void EpubReaderActivity::activateMoreRow(int row) {
       break;
   }
   // Leaf actions open their own screen / perform the action; close the overlay first.
-  overlay = Overlay::None;
-  if (action == MA::GO_TO_PERCENT && overlayPageStored) {
-    // The percent dialog is a popup over the current frame: wipe the toolbar
-    // chrome back to the clean page first so the dialog draws over the page,
-    // not the sheet. No refresh push — the dialog's first frame carries it.
-    RenderLock lock;
-    settleOverlayRefresh();
-    renderer.restoreBwBuffer(/*resyncPanelBaseline=*/false);
-    overlayPageStored = false;
-  } else {
-    discardOverlayPage();
+  {
+    RenderLock lock;  // the render task reads overlay and the stored page
+    overlay = Overlay::None;
+    if (action == MA::GO_TO_PERCENT && overlayPageStored) {
+      // The percent dialog is a popup over the current frame: wipe the toolbar
+      // chrome back to the clean page first so the dialog draws over the page,
+      // not the sheet. No refresh push — the dialog's first frame carries it.
+      settleOverlayRefresh();
+      renderer.restoreBwBuffer(/*resyncPanelBaseline=*/false);
+      overlayPageStored = false;
+    } else {
+      discardOverlayPage();
+    }
   }
   if (action == MA::TOGGLE_BOOKMARK) {
     // No child activity here to trigger the re-render the list menu relies on:
