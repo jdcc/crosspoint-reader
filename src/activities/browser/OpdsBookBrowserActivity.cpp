@@ -31,6 +31,7 @@
 #include "components/icons/opdsIcons.h"
 #include "network/HttpDownloader.h"
 #include "network/LcpDevice.h"
+#include "network/WireGuardTunnel.h"
 #include "util/BookCacheUtils.h"
 #include "util/OpdsFeedError.h"
 #include "util/OpdsFilename.h"
@@ -106,6 +107,7 @@ void OpdsBookBrowserActivity::onEnter() {
 void OpdsBookBrowserActivity::onExit() {
   releaseEntries();
   navigationHistory.clear();
+  wgtunnel::down();
   if (!detailCoverPath.empty()) {
     if (Storage.exists(detailCoverPath.c_str())) Storage.remove(detailCoverPath.c_str());
     detailCoverPath.clear();
@@ -337,6 +339,11 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
   }
 
   const std::string url = UrlUtils::buildUrl(server.url, path);
+  // Off the home network, reach the server through the WireGuard tunnel when one is configured.
+  if (!tunnelChecked && !(tunnelChecked = wgtunnel::ensureRoute(url))) {
+    fail(StrId::STR_FEED_UNREACHABLE);
+    return;
+  }
   OpdsFeedParser parser;
   const auto status = opdsClient.fetchFeed(url, parser);
   // The token state may have changed (renewed, or cleared on failure); persist

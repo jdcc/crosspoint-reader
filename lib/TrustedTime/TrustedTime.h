@@ -44,6 +44,10 @@ void startSync();
 // right now (e.g. progress-sync timestamps). Returns true when synced.
 bool syncNow(uint32_t timeoutMs);
 
+// True once SNTP has set the clock this boot. Unlike syncNow(), checking it
+// never restarts a sync that is already under way.
+bool syncedThisBoot();
+
 // Epoch seconds when the clock is trustworthy (a plausible present-day
 // value, restored or synced), else 0. Never earlier than a time already seen
 // this boot or restored from the floor, so a backward clock step cannot undo

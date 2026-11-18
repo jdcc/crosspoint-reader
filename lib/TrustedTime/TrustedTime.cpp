@@ -38,6 +38,9 @@ constexpr const char* PREFS_KEY = "floor";
 int64_t ramFloor = 0;
 portMUX_TYPE ramFloorLock = portMUX_INITIALIZER_UNLOCKED;
 
+// Set once SNTP has answered this boot (callback on the lwIP task, or syncNow).
+volatile bool syncedThisBootFlag = false;
+
 // Raises the in-RAM floor to `value` if higher; returns the resulting floor.
 int64_t raiseFloor(const int64_t value) {
   portENTER_CRITICAL(&ramFloorLock);
@@ -63,7 +66,10 @@ void writeFloor(const int64_t value) {
 }
 
 // SNTP sync callback (lwIP task context; Preferences/NVS is mutex-guarded).
-void onTimeSynced(struct timeval*) { note(); }
+void onTimeSynced(struct timeval*) {
+  syncedThisBootFlag = true;
+  note();
+}
 
 void configureSntp() {
   // SNTP uses UTC epochs regardless of the display timezone. Copy TZ before
@@ -127,13 +133,20 @@ bool syncNow(const uint32_t timeoutMs) {
   // configureSntp() (configTzTime) restarts SNTP if already running.
   configureSntp();
   const unsigned long deadline = millis() + timeoutMs;
-  while (sntp_get_sync_status() != SNTP_SYNC_STATUS_COMPLETED && static_cast<long>(deadline - millis()) > 0) {
+  // The status reads COMPLETED once and then resets, so keep the value the loop saw.
+  bool synced = false;
+  while (!(synced = sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED) &&
+         static_cast<long>(deadline - millis()) > 0) {
     delay(100);
   }
-  const bool synced = sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED;
-  if (synced) note();
+  if (synced) {
+    syncedThisBootFlag = true;
+    note();
+  }
   return synced;
 }
+
+bool syncedThisBoot() { return syncedThisBootFlag; }
 
 int64_t trustedNow() {
   const int64_t now = static_cast<int64_t>(time(nullptr));

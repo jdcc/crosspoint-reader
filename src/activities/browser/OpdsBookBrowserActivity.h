@@ -133,6 +133,7 @@ class OpdsBookBrowserActivity final : public CatalogActivity {
   std::string pendingLcpPath;
 
   void fetchFeed(const std::string& path);
+  bool tunnelChecked = false;  // WireGuard route decided for this session
   // Whether the download in progress opens in the reader when it completes.
   bool openAfterDownload = true;
   // Not a purchase or a loan: offers Download and Download + Open.
