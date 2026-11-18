@@ -321,6 +321,18 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(HalFile& pngFile, Print& bmpO
     return false;
   }
 
+  // The row decoders below assume the bit depths the PNG spec allows for each
+  // color type; any other pair would divide by zero or read past the row.
+  const bool sampleDepth = bitDepth == 8 || bitDepth == 16;
+  const bool indexDepth = bitDepth == 1 || bitDepth == 2 || bitDepth == 4 || bitDepth == 8;
+  const bool depthOk = colorType == PNG_COLOR_GRAYSCALE ? indexDepth || bitDepth == 16
+                       : colorType == PNG_COLOR_PALETTE ? indexDepth
+                                                        : sampleDepth;
+  if (!depthOk) {
+    LOG_ERR("PNG", "Unsupported bit depth %u for color type %u", bitDepth, colorType);
+    return false;
+  }
+
   // Safety limits
   constexpr int MAX_IMAGE_WIDTH = 2048;
   constexpr int MAX_IMAGE_HEIGHT = 3072;
