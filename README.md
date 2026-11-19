@@ -1,5 +1,24 @@
 # CrossPoint Reader
 
+> **Personal X4 Pro build.** This fork adds the following to upstream CrossPoint:
+>
+> - **Frontlight margin drags:** In the reader, drag up or down the left edge to set brightness, or the right edge to set warmth. You can change the light without opening a menu. A swipe that moves sideways still turns the page.
+> - **Light panel off position:** Slide brightness to the far left, or press - at 1%, to turn the light off. The panel shows "Off" instead of a misleading 1%.
+> - **Night mode on the home button:** The home button can toggle night mode, for a quick switch in a dark room.
+> - **Text anti-aliasing styles (X4 Pro):** Choose Fast (one refresh, one gray level), Smooth (two refreshes, two gray levels) or Experimental (Fast, with edge tones that adjust to the previous page). This lets you trade page-turn speed against text smoothness. Night mode text also gets gray edges drawn for a black background.
+> - **Faster panel updates (X4 Pro):** The display bus runs at 20 MHz instead of 10 MHz, the highest rate the controller maker documents.
+> - **Mark as Read:** A reader menu entry closes the book and moves it to the `read` folder, so finished books are out of the way.
+> - **Library ignores finished books:** Books in `read` are no longer listed in the Library. The Library updates after books are moved or renamed, from the device or the web.
+> - **OPDS books already on the card:** Catalog rows show "Downloaded" or "Read". The book page offers Open and Redownload instead of downloading a second copy. Other books offer Download + Open.
+> - **Safer OPDS redownloads:** A new download replaces the old file only after it is confirmed to be an EPUB. A failed or bad download never destroys the copy you have.
+> - **WireGuard access to OPDS:** Away from home, the OPDS browser can reach a home catalog server through a WireGuard tunnel set up in `/.crosspoint/wireguard.json`.
+> - **More protected files:** The web file manager and plugins can't read or change OPDS tokens, LCP keys or the WireGuard config, just like Wi-Fi passwords.
+> - **Settings survive power loss:** If power is cut while settings are being saved, they're recovered on the next boot instead of going back to defaults.
+> - **Full SD card handling:** A chapter that couldn't be written completely is thrown away and rebuilt, so a full card can't leave a broken layout behind.
+> - **Reader stability:** Fixed a crash risk when opening and closing reader menus while a page was drawing. A page turn tapped just before a link or bookmark jump no longer runs after it.
+> - **Stricter image checks:** PNG images with invalid formats are rejected instead of causing bad reads.
+> - **Serial bench commands:** For testing, `CMD:BTN:` presses a button and `CMD:PLANE:` shows one gray level of a page for a screenshot.
+
 [![Fund contributors](https://img.shields.io/badge/%F0%9F%91%91_Fund_contributors-royalty.dev-BB953A?style=for-the-badge&labelColor=1a1a1a)](https://app.royalty.dev/crosspoint-reader/crosspoint-reader)
 
 CrossPoint is open-source e-reader firmware - community-built, fully hackable, free forever. It's maintained by a growing community of developers and readers who believe your device should do what you want - not what a manufacturer decided for you.
