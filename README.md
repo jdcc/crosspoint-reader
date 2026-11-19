@@ -12,6 +12,7 @@
 > - **OPDS books already on the card:** Catalog rows show "Downloaded" or "Read". The book page offers Open and Redownload instead of downloading a second copy. Other books offer Download + Open.
 > - **Safer OPDS redownloads:** A new download replaces the old file only after it is confirmed to be an EPUB. A failed or bad download never destroys the copy you have.
 > - **WireGuard access to OPDS:** Away from home, the OPDS browser can reach a home catalog server through a WireGuard tunnel set up in `/.crosspoint/wireguard.json`.
+> - **Faster, steadier Wi-Fi connections:** The device connects straight to the router it used last time instead of scanning every channel. Slow routers get more time to answer, and if the first try fails your saved network is tried again before you're shown the network list. Why a connection dropped is written to the serial log.
 > - **More protected files:** The web file manager and plugins can't read or change OPDS tokens, LCP keys or the WireGuard config, just like Wi-Fi passwords.
 > - **Settings survive power loss:** If power is cut while settings are being saved, they're recovered on the next boot instead of going back to defaults.
 > - **Full SD card handling:** A chapter that couldn't be written completely is thrown away and rebuilt, so a full card can't leave a broken layout behind.
