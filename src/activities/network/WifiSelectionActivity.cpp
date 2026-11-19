@@ -9,6 +9,7 @@
 #include <esp_mac.h>
 
 #include <algorithm>
+#include <cstring>
 
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
@@ -24,6 +25,60 @@ namespace {
 constexpr fui::ActionId ACTION_ROW = 1;
 constexpr fui::ActionId ACTION_SCAN = 2;
 constexpr fui::ActionId ACTION_PROMPT = 3;
+
+// Router of the last successful join. RTC memory survives the silent restart
+// after a catalog session and deep sleep, so the next join can skip the full
+// channel scan. A cold boot leaves garbage, which the magic rejects.
+struct LastRouter {
+  uint32_t magic;
+  char ssid[33];
+  uint8_t bssid[6];
+  uint8_t channel;
+};
+constexpr uint32_t LAST_ROUTER_MAGIC = 0x57464C52;
+RTC_NOINIT_ATTR LastRouter lastRouter;
+
+bool hasLastRouterFor(const std::string& ssid) {
+  return lastRouter.magic == LAST_ROUTER_MAGIC && lastRouter.ssid[sizeof(lastRouter.ssid) - 1] == '\0' &&
+         lastRouter.channel >= 1 && lastRouter.channel <= 14 && ssid == lastRouter.ssid;
+}
+
+void rememberRouter(const std::string& ssid) {
+  lastRouter.magic = 0;
+  if (ssid.size() >= sizeof(lastRouter.ssid)) return;
+  const int32_t channel = WiFi.channel();
+  if (channel < 1 || channel > 14) return;
+  memcpy(lastRouter.ssid, ssid.c_str(), ssid.size() + 1);
+  WiFi.BSSID(lastRouter.bssid);
+  lastRouter.channel = static_cast<uint8_t>(channel);
+  lastRouter.magic = LAST_ROUTER_MAGIC;
+}
+
+// Join diagnostics: when each stage finished, and why a join dropped.
+unsigned long joinStartMs = 0;
+
+void logJoinEvent(const arduino_event_id_t event, const arduino_event_info_t info) {
+  const unsigned long elapsed = millis() - joinStartMs;
+  switch (event) {
+    case ARDUINO_EVENT_WIFI_STA_CONNECTED:
+      LOG_INF("WIFI", "Associated after %lu ms (channel %u)", elapsed,
+              static_cast<unsigned>(info.wifi_sta_connected.channel));
+      break;
+    case ARDUINO_EVENT_WIFI_STA_GOT_IP:
+      LOG_INF("WIFI", "Got IP after %lu ms", elapsed);
+      break;
+    case ARDUINO_EVENT_WIFI_STA_DISCONNECTED: {
+      const auto reason = static_cast<wifi_err_reason_t>(info.wifi_sta_disconnected.reason);
+      // Our own disconnect before each join; not a failure.
+      if (reason == WIFI_REASON_ASSOC_LEAVE) break;
+      LOG_INF("WIFI", "Disconnected after %lu ms: reason %u (%s), RSSI %d", elapsed, static_cast<unsigned>(reason),
+              WiFi.disconnectReasonName(reason), static_cast<int>(info.wifi_sta_disconnected.rssi));
+      break;
+    }
+    default:
+      break;
+  }
+}
 }  // namespace
 
 WifiSelectionActivity::WifiSelectionActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
@@ -114,6 +169,9 @@ void WifiSelectionActivity::onEnter() {
   autoConnecting = false;
   manualNetworkListRequested = false;
   autoAttemptedSsids.clear();
+  retryLastSsidAfterScan = false;
+  usedLastRouter = false;
+  joinEventId = WiFi.onEvent(logJoinEvent);
   const size_t savedCredentialCount = WIFI_STORE.getCredentialCount();
   autoAttemptedSsids.reserve(savedCredentialCount);
 
@@ -150,6 +208,7 @@ void WifiSelectionActivity::onEnter() {
     if (!lastSsid.empty()) {
       const auto cred = WIFI_STORE.findCredential(lastSsid);
       if (cred && tryAutoConnectCredential(*cred)) {
+        retryLastSsidAfterScan = true;
         return;
       }
     }
@@ -164,6 +223,7 @@ void WifiSelectionActivity::onEnter() {
 
 void WifiSelectionActivity::onExit() {
   Activity::onExit();
+  WiFi.removeEvent(joinEventId);
 
   LOG_DBG("WIFI", "Free heap at onExit start: %d bytes", ESP.getFreeHeap());
 
@@ -426,6 +486,13 @@ bool WifiSelectionActivity::tryNextSavedNetworkFromScan() {
 void WifiSelectionActivity::handleAutoConnectFailure() {
   LOG_DBG("WIFI", "Saved network failed: %s", selectedSSID.c_str());
   WiFi.disconnect();
+  // The router may have moved channel; the retry scans for it.
+  if (usedLastRouter) lastRouter.magic = 0;
+  if (retryLastSsidAfterScan) {
+    retryLastSsidAfterScan = false;
+    autoAttemptedSsids.erase(std::remove(autoAttemptedSsids.begin(), autoAttemptedSsids.end(), selectedSSID),
+                             autoAttemptedSsids.end());
+  }
 
   if (!networks.empty()) {
     if (tryNextSavedNetworkFromScan()) {
@@ -487,10 +554,15 @@ void WifiSelectionActivity::attemptConnection() {
     LOG_ERR("WIFI", "Failed to read station MAC for hostname (err=%d)", static_cast<int>(macResult));
   }
 
-  if (selectedRequiresPassword && !enteredPassword.empty()) {
-    WiFi.begin(selectedSSID.c_str(), enteredPassword.c_str());
+  const char* passphrase = selectedRequiresPassword && !enteredPassword.empty() ? enteredPassword.c_str() : nullptr;
+  // An auto-join goes straight to the remembered router, skipping the scan.
+  usedLastRouter = autoConnecting && hasLastRouterFor(selectedSSID);
+  joinStartMs = millis();
+  LOG_INF("WIFI", "Joining %s (%s)", selectedSSID.c_str(), usedLastRouter ? "last router" : "full scan");
+  if (usedLastRouter) {
+    WiFi.begin(selectedSSID.c_str(), passphrase, lastRouter.channel, lastRouter.bssid);
   } else {
-    WiFi.begin(selectedSSID.c_str());
+    WiFi.begin(selectedSSID.c_str(), passphrase);
   }
 }
 
@@ -508,6 +580,8 @@ void WifiSelectionActivity::checkConnectionStatus() {
     snprintf(ipStr, sizeof(ipStr), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
     connectedIP = ipStr;
     autoConnecting = false;
+    retryLastSsidAfterScan = false;
+    rememberRouter(selectedSSID);
 
 #if defined(ENABLE_SERIAL_LOG) && LOG_LEVEL >= 2
     uint8_t connectedBssid[6] = {};

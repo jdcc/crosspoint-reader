@@ -93,6 +93,13 @@ class WifiSelectionActivity final : public Activity, private UiAppHost {
 
   // Saved SSIDs already attempted during the current auto-connect session.
   std::vector<std::string> autoAttemptedSsids;
+  // The first try at the last network may fail on a slow router; it gets one
+  // more try, with a full scan, after the fallback scan.
+  bool retryLastSsidAfterScan = false;
+  // The current attempt went straight to the remembered router (no full scan).
+  bool usedLastRouter = false;
+  // WiFi.onEvent() handle of the join diagnostics logger.
+  size_t joinEventId = 0;
 
   // Save/forget prompt selection (0 = Yes, 1 = No)
   int savePromptSelection = 0;
@@ -100,7 +107,8 @@ class WifiSelectionActivity final : public Activity, private UiAppHost {
 
   // Connection timeout
   static constexpr unsigned long CONNECTION_TIMEOUT_MS = 15000;
-  static constexpr unsigned long AUTO_CONNECTION_TIMEOUT_MS = 7000;
+  // Covers the scan, the join and the DHCP lease; slow routers need over 7 s.
+  static constexpr unsigned long AUTO_CONNECTION_TIMEOUT_MS = 12000;
   unsigned long connectionStartTime = 0;
 
   // The UiAppHost app hosts the network list and the save/forget prompts
